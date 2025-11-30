@@ -109,6 +109,10 @@ async function authenticateWithGoogle() {
         
         if (result.success) {
             updateGoogleAuthStatus(true);
+            // Automatically load meetings if API key is configured
+            if (elements.apiKeyInput.value.trim()) {
+                loadMeetings();
+            }
         } else {
             elements.googleAuthStatus.textContent = result.error || 'Authentication failed';
             elements.googleAuthStatus.className = 'auth-status error';
