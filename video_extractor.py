@@ -77,11 +77,11 @@ class VideoExtractor:
         page = self.context.new_page()
         
         try:
-            # Navigate to Fathom login
-            page.goto('https://fathom.video/login', wait_until='networkidle')
+            # Navigate to Fathom login page
+            page.goto('https://fathom.video/users/sign_in', wait_until='networkidle')
             
-            # Check if already logged in
-            if 'login' not in page.url.lower() and 'fathom.video' in page.url:
+            # Check if already logged in (redirected to dashboard or home)
+            if 'sign_in' not in page.url.lower() and 'sign_up' not in page.url.lower():
                 self._save_session()
                 self.authenticated = True
                 page.close()
@@ -99,7 +99,7 @@ class VideoExtractor:
             # Wait for redirect away from login page
             try:
                 page.wait_for_url(
-                    lambda url: 'login' not in url.lower() and 'accounts.google' not in url.lower(),
+                    lambda url: 'sign_in' not in url.lower() and 'sign_up' not in url.lower() and 'accounts.google' not in url.lower(),
                     timeout=120000  # 2 minutes
                 )
             except:
@@ -127,10 +127,10 @@ class VideoExtractor:
         
         try:
             # Navigate to Fathom to check auth status
-            page.goto('https://fathom.video/', wait_until='networkidle')
+            page.goto('https://fathom.video/home', wait_until='networkidle')
             
-            # Check if we're logged in
-            if 'login' not in page.url.lower():
+            # Check if we're logged in (not redirected to sign_in)
+            if 'sign_in' not in page.url.lower() and 'sign_up' not in page.url.lower():
                 self.authenticated = True
                 return True, None
             
