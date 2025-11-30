@@ -1,0 +1,472 @@
+/* Fathom Batch Downloader - Styles */
+
+:root {
+    /* Dracula-inspired dark theme */
+    --bg-primary: #1a1b26;
+    --bg-secondary: #24283b;
+    --bg-tertiary: #2f3549;
+    --text-primary: #c0caf5;
+    --text-secondary: #9aa5ce;
+    --text-muted: #565f89;
+    --accent: #7aa2f7;
+    --accent-hover: #89b4fa;
+    --success: #9ece6a;
+    --warning: #e0af68;
+    --error: #f7768e;
+    --border: #3b4261;
+    --shadow: rgba(0, 0, 0, 0.3);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+/* Header */
+header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), #bb9af7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+/* Cards */
+.card {
+    background: var(--bg-secondary);
+    border-radius: 12px;
+    padding: 1.75rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 20px var(--shadow);
+    border: 1px solid var(--border);
+}
+
+.card h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1.25rem;
+    color: var(--text-primary);
+}
+
+/* Form Elements */
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 1rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(122, 162, 247, 0.15);
+}
+
+input::placeholder {
+    color: var(--text-muted);
+}
+
+small {
+    display: block;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+small a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+small a:hover {
+    text-decoration: underline;
+}
+
+/* Buttons */
+.button-group {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+}
+
+.btn {
+    padding: 0.75rem 1.5rem;
+    font-size: 0.95rem;
+    font-weight: 500;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: var(--bg-primary);
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+}
+
+.btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--border);
+}
+
+.btn-small {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+}
+
+.btn-large {
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+    width: 100%;
+    justify-content: center;
+    margin-top: 1.5rem;
+}
+
+/* Status Messages */
+.status-message {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    display: none;
+}
+
+.status-message.success {
+    display: block;
+    background: rgba(158, 206, 106, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(158, 206, 106, 0.3);
+}
+
+.status-message.error {
+    display: block;
+    background: rgba(247, 118, 142, 0.15);
+    color: var(--error);
+    border: 1px solid rgba(247, 118, 142, 0.3);
+}
+
+.status-message.warning {
+    display: block;
+    background: rgba(224, 175, 104, 0.15);
+    color: var(--warning);
+    border: 1px solid rgba(224, 175, 104, 0.3);
+}
+
+/* Meetings Section */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.section-header h2 {
+    margin-bottom: 0;
+}
+
+.meeting-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.selected-count {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-left: 0.5rem;
+}
+
+/* Table */
+.table-container {
+    overflow-x: auto;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+}
+
+.meetings-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.meetings-table th,
+.meetings-table td {
+    padding: 0.875rem 1rem;
+    text-align: left;
+}
+
+.meetings-table th {
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.meetings-table td {
+    border-bottom: 1px solid var(--border);
+    font-size: 0.95rem;
+}
+
+.meetings-table tbody tr:hover {
+    background: rgba(122, 162, 247, 0.05);
+}
+
+.meetings-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.checkbox-col {
+    width: 50px;
+    text-align: center;
+}
+
+.checkbox-col input {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.meeting-title {
+    font-weight: 500;
+}
+
+.meeting-date {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-muted);
+}
+
+/* Download Options */
+.options-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.option-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: var(--bg-tertiary);
+    border-radius: 8px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    transition: all 0.2s;
+}
+
+.option-item:hover {
+    border-color: var(--accent);
+}
+
+.option-item input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.option-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.option-icon {
+    font-size: 1.5rem;
+}
+
+.option-text {
+    font-weight: 500;
+}
+
+/* Progress Overlay */
+.progress-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+.progress-modal {
+    background: var(--bg-secondary);
+    border-radius: 16px;
+    padding: 2rem;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 20px 40px var(--shadow);
+    border: 1px solid var(--border);
+}
+
+.progress-modal h2 {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.progress-bar-container {
+    height: 8px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 1rem;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #bb9af7);
+    width: 0%;
+    transition: width 0.3s ease;
+    border-radius: 4px;
+}
+
+.progress-text {
+    text-align: center;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.progress-log {
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
+    background: var(--bg-primary);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.progress-log p {
+    margin-bottom: 0.5rem;
+    color: var(--text-muted);
+}
+
+.progress-log p.warning {
+    color: var(--warning);
+}
+
+.progress-log p.error {
+    color: var(--error);
+}
+
+.progress-log p.success {
+    color: var(--success);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .container {
+        padding: 1rem;
+    }
+
+    header h1 {
+        font-size: 1.75rem;
+    }
+
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    .options-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .meeting-controls {
+        width: 100%;
+        justify-content: space-between;
+    }
+}
+

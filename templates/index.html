@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fathom Batch Downloader</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Fathom Batch Downloader</h1>
+            <p class="subtitle">Download your meeting recordings, transcripts, and summaries</p>
+        </header>
+
+        <!-- Configuration Section -->
+        <section class="config-section card" id="config-section">
+            <h2>Configuration</h2>
+            
+            <div class="form-group">
+                <label for="api-key">Fathom API Key</label>
+                <input type="password" id="api-key" placeholder="Enter your Fathom API key">
+                <small>Get your API key from <a href="https://fathom.video/settings" target="_blank">Fathom Settings</a></small>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="fathom-email">Fathom Email</label>
+                    <input type="email" id="fathom-email" placeholder="your@email.com">
+                </div>
+                <div class="form-group">
+                    <label for="fathom-password">Fathom Password</label>
+                    <input type="password" id="fathom-password" placeholder="Password (required for video download)">
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-primary" id="save-config-btn">Save Configuration</button>
+                <button class="btn btn-secondary" id="load-meetings-btn" disabled>Load Meetings</button>
+            </div>
+            
+            <div id="config-status" class="status-message"></div>
+        </section>
+
+        <!-- Meetings Section -->
+        <section class="meetings-section card" id="meetings-section" style="display: none;">
+            <div class="section-header">
+                <h2>Your Meetings</h2>
+                <div class="meeting-controls">
+                    <button class="btn btn-small" id="select-all-btn">Select All</button>
+                    <button class="btn btn-small" id="select-none-btn">Select None</button>
+                    <span class="selected-count" id="selected-count">0 selected</span>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table class="meetings-table" id="meetings-table">
+                    <thead>
+                        <tr>
+                            <th class="checkbox-col"><input type="checkbox" id="select-all-checkbox"></th>
+                            <th>Meeting Name</th>
+                            <th>Date</th>
+                            <th>Recorded By</th>
+                        </tr>
+                    </thead>
+                    <tbody id="meetings-tbody">
+                        <!-- Meetings will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="no-meetings" class="empty-state" style="display: none;">
+                <p>No meetings found. Make sure your API key is correct.</p>
+            </div>
+        </section>
+
+        <!-- Download Options Section -->
+        <section class="download-section card" id="download-section" style="display: none;">
+            <h2>Download Options</h2>
+            
+            <div class="options-grid">
+                <label class="option-item">
+                    <input type="checkbox" id="opt-video" checked>
+                    <span class="option-label">
+                        <span class="option-icon">🎥</span>
+                        <span class="option-text">Video Recording</span>
+                    </span>
+                </label>
+                
+                <label class="option-item">
+                    <input type="checkbox" id="opt-transcript" checked>
+                    <span class="option-label">
+                        <span class="option-icon">📝</span>
+                        <span class="option-text">Transcript</span>
+                    </span>
+                </label>
+                
+                <label class="option-item">
+                    <input type="checkbox" id="opt-summary" checked>
+                    <span class="option-label">
+                        <span class="option-icon">📋</span>
+                        <span class="option-text">Summary</span>
+                    </span>
+                </label>
+                
+                <label class="option-item">
+                    <input type="checkbox" id="opt-action-items" checked>
+                    <span class="option-label">
+                        <span class="option-icon">✅</span>
+                        <span class="option-text">Action Items</span>
+                    </span>
+                </label>
+            </div>
+
+            <button class="btn btn-primary btn-large" id="download-btn" disabled>
+                Download Selected Meetings
+            </button>
+        </section>
+
+        <!-- Progress Overlay -->
+        <div class="progress-overlay" id="progress-overlay" style="display: none;">
+            <div class="progress-modal">
+                <h2>Downloading...</h2>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                <p class="progress-text" id="progress-text">Preparing download...</p>
+                <div class="progress-log" id="progress-log"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+
