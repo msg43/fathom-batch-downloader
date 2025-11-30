@@ -332,15 +332,10 @@ async function startDownload() {
         action_items: elements.optActionItems.checked
     };
     
-    // Check if video is selected but no credentials
-    if (options.video) {
-        const email = elements.fathomEmailInput.value.trim();
-        const password = elements.fathomPasswordInput.value;
-        
-        if (!email || !password || password === '••••••••') {
-            showStatus('warning', 'Fathom email and password required for video download. Please enter them above.');
-            return;
-        }
+    // Check if video is selected but not authenticated with Google
+    if (options.video && !elements.googleAuthBtn.disabled) {
+        showStatus('warning', 'Please sign in with Google first to enable video downloads.');
+        return;
     }
     
     // Show progress overlay
