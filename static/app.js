@@ -6,11 +6,11 @@
 const elements = {
     // Config
     apiKeyInput: document.getElementById('api-key'),
-    fathomEmailInput: document.getElementById('fathom-email'),
-    fathomPasswordInput: document.getElementById('fathom-password'),
     saveConfigBtn: document.getElementById('save-config-btn'),
     loadMeetingsBtn: document.getElementById('load-meetings-btn'),
     configStatus: document.getElementById('config-status'),
+    googleAuthBtn: document.getElementById('google-auth-btn'),
+    googleAuthStatus: document.getElementById('google-auth-status'),
     
     // Meetings
     meetingsSection: document.getElementById('meetings-section'),
@@ -51,6 +51,7 @@ function setupEventListeners() {
     // Config buttons
     elements.saveConfigBtn.addEventListener('click', saveConfig);
     elements.loadMeetingsBtn.addEventListener('click', loadMeetings);
+    elements.googleAuthBtn.addEventListener('click', authenticateWithGoogle);
     
     // Selection buttons
     elements.selectAllBtn.addEventListener('click', selectAll);
@@ -71,22 +72,67 @@ async function loadConfig() {
             elements.apiKeyInput.value = config.api_key;
             elements.loadMeetingsBtn.disabled = false;
         }
-        if (config.fathom_email) {
-            elements.fathomEmailInput.value = config.fathom_email;
-        }
-        if (config.fathom_password) {
-            elements.fathomPasswordInput.value = config.fathom_password;
-        }
+        
+        // Update Google auth status
+        updateGoogleAuthStatus(config.google_authenticated);
     } catch (error) {
         console.error('Failed to load config:', error);
     }
 }
 
+function updateGoogleAuthStatus(isAuthenticated) {
+    if (isAuthenticated) {
+        elements.googleAuthStatus.textContent = '✓ Signed in - Video downloads enabled';
+        elements.googleAuthStatus.className = 'auth-status authenticated';
+        elements.googleAuthBtn.textContent = '✓ Signed in with Google';
+        elements.googleAuthBtn.disabled = true;
+    } else {
+        elements.googleAuthStatus.textContent = 'Sign in to enable video downloads';
+        elements.googleAuthStatus.className = 'auth-status';
+        elements.googleAuthBtn.disabled = false;
+    }
+}
+
+async function authenticateWithGoogle() {
+    elements.googleAuthBtn.disabled = true;
+    elements.googleAuthBtn.innerHTML = '<span class="spinner"></span> Opening browser...';
+    elements.googleAuthStatus.textContent = 'A browser window will open. Please sign in with Google.';
+    elements.googleAuthStatus.className = 'auth-status pending';
+    
+    try {
+        const response = await fetch('/api/google-auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            updateGoogleAuthStatus(true);
+        } else {
+            elements.googleAuthStatus.textContent = result.error || 'Authentication failed';
+            elements.googleAuthStatus.className = 'auth-status error';
+            elements.googleAuthBtn.disabled = false;
+            elements.googleAuthBtn.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" fill="#4285F4"/>
+                    <path d="M9.003 18c2.43 0 4.467-.806 5.956-2.18l-2.909-2.26c-.806.54-1.836.86-3.047.86-2.344 0-4.328-1.584-5.036-3.711H.96v2.332C2.44 15.983 5.485 18 9.003 18z" fill="#34A853"/>
+                    <path d="M3.964 10.712c-.18-.54-.282-1.117-.282-1.71 0-.593.102-1.17.282-1.71V4.96H.957C.347 6.175 0 7.55 0 9.002c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+                    <path d="M9.003 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.464.891 11.428 0 9.002 0 5.485 0 2.44 2.017.96 4.958L3.967 7.29c.708-2.127 2.692-3.71 5.036-3.71z" fill="#EA4335"/>
+                </svg>
+                Try Again
+            `;
+        }
+    } catch (error) {
+        elements.googleAuthStatus.textContent = 'Failed to start authentication: ' + error.message;
+        elements.googleAuthStatus.className = 'auth-status error';
+        elements.googleAuthBtn.disabled = false;
+    }
+}
+
 async function saveConfig() {
     const config = {
-        api_key: elements.apiKeyInput.value.trim(),
-        fathom_email: elements.fathomEmailInput.value.trim(),
-        fathom_password: elements.fathomPasswordInput.value
+        api_key: elements.apiKeyInput.value.trim()
     };
     
     if (!config.api_key) {

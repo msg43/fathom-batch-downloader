@@ -1,10 +1,12 @@
 """
 Video Extractor
 Uses Playwright to extract and download videos from Fathom pages
+Supports Google OAuth by using a persistent browser session
 """
 
 import os
 import re
+import json
 import requests
 from typing import Optional, Tuple
 from playwright.sync_api import sync_playwright, Browser, Page
@@ -13,59 +15,130 @@ from playwright.sync_api import sync_playwright, Browser, Page
 class VideoExtractor:
     """Extracts video files from Fathom video pages using browser automation"""
     
-    def __init__(self, email: str, password: str):
+    # Path to store browser session for Google OAuth
+    SESSION_DIR = os.path.join(os.path.dirname(__file__), '.browser_session')
+    
+    def __init__(self, email: str = None, password: str = None):
         self.email = email
         self.password = password
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.context = None
         self.authenticated = False
+        self._headless = True  # Will be set to False for first-time Google auth
     
-    def _ensure_browser(self):
+    def _ensure_browser(self, headless: bool = True):
         """Initialize browser if not already running"""
         if not self.browser:
             self.playwright = sync_playwright().start()
+            
+            # Create session directory if it doesn't exist
+            os.makedirs(self.SESSION_DIR, exist_ok=True)
+            
             self.browser = self.playwright.chromium.launch(
-                headless=True,
+                headless=headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
-            self.context = self.browser.new_context(
-                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            )
+            
+            # Try to load existing session
+            storage_state = os.path.join(self.SESSION_DIR, 'state.json')
+            if os.path.exists(storage_state):
+                try:
+                    self.context = self.browser.new_context(
+                        storage_state=storage_state,
+                        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
+                except:
+                    self.context = self.browser.new_context(
+                        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
+            else:
+                self.context = self.browser.new_context(
+                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                )
+    
+    def _save_session(self):
+        """Save browser session for future use"""
+        if self.context:
+            storage_state = os.path.join(self.SESSION_DIR, 'state.json')
+            self.context.storage_state(path=storage_state)
+    
+    def authenticate_with_google(self) -> Tuple[bool, str]:
+        """
+        Launch a visible browser for Google OAuth authentication.
+        User must complete the login manually, then this saves the session.
+        Returns (success, message)
+        """
+        # Close any existing browser
+        self.close()
+        
+        # Launch visible browser for manual login
+        self._ensure_browser(headless=False)
+        page = self.context.new_page()
+        
+        try:
+            # Navigate to Fathom login
+            page.goto('https://fathom.video/login', wait_until='networkidle')
+            
+            # Check if already logged in
+            if 'login' not in page.url.lower() and 'fathom.video' in page.url:
+                self._save_session()
+                self.authenticated = True
+                page.close()
+                return True, "Already logged in! Session saved."
+            
+            # Wait for user to complete Google OAuth (up to 2 minutes)
+            print("\n" + "="*50)
+            print("GOOGLE LOGIN REQUIRED")
+            print("="*50)
+            print("A browser window has opened.")
+            print("Please log in with your Google account.")
+            print("Waiting up to 2 minutes for login...")
+            print("="*50 + "\n")
+            
+            # Wait for redirect away from login page
+            try:
+                page.wait_for_url(
+                    lambda url: 'login' not in url.lower() and 'accounts.google' not in url.lower(),
+                    timeout=120000  # 2 minutes
+                )
+            except:
+                page.close()
+                return False, "Login timed out. Please try again."
+            
+            # Give it a moment to fully load
+            page.wait_for_timeout(2000)
+            
+            # Save the session
+            self._save_session()
+            self.authenticated = True
+            
+            page.close()
+            return True, "Login successful! Session saved for future downloads."
+            
+        except Exception as e:
+            page.close()
+            return False, f"Authentication error: {str(e)}"
     
     def _authenticate(self, page: Page) -> Tuple[bool, Optional[str]]:
-        """Authenticate with Fathom if needed"""
+        """Check if authenticated, prompt for Google login if needed"""
         if self.authenticated:
             return True, None
         
         try:
-            # Navigate to login page
-            page.goto('https://fathom.video/login', wait_until='networkidle')
+            # Navigate to Fathom to check auth status
+            page.goto('https://fathom.video/', wait_until='networkidle')
             
-            # Check if already logged in (might have cookies from previous session)
+            # Check if we're logged in
             if 'login' not in page.url.lower():
                 self.authenticated = True
                 return True, None
             
-            # Fill in login form
-            page.fill('input[type="email"], input[name="email"]', self.email)
-            page.fill('input[type="password"], input[name="password"]', self.password)
-            
-            # Click login button
-            page.click('button[type="submit"]')
-            
-            # Wait for navigation
-            page.wait_for_load_state('networkidle', timeout=15000)
-            
-            # Check if login was successful
-            if 'login' in page.url.lower():
-                return False, "Login failed - please check your credentials"
-            
-            self.authenticated = True
-            return True, None
+            # Not logged in - need Google OAuth
+            return False, "Google authentication required. Please use 'Authenticate with Google' button first."
             
         except Exception as e:
-            return False, f"Authentication error: {str(e)}"
+            return False, f"Authentication check error: {str(e)}"
     
     def extract_video_url(self, fathom_url: str) -> Tuple[Optional[str], Optional[str]]:
         """

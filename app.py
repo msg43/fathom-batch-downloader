@@ -50,6 +50,9 @@ def config():
         # Don't send password back to client
         if 'fathom_password' in cfg:
             cfg['fathom_password'] = '••••••••' if cfg['fathom_password'] else ''
+        # Check if Google session exists
+        session_file = os.path.join(os.path.dirname(__file__), '.browser_session', 'state.json')
+        cfg['google_authenticated'] = os.path.exists(session_file)
         return jsonify(cfg)
     
     elif request.method == 'POST':
@@ -73,6 +76,22 @@ def config():
         
         save_config(cfg)
         return jsonify({'success': True})
+
+
+@app.route('/api/google-auth', methods=['POST'])
+def google_auth():
+    """Initiate Google OAuth authentication via browser"""
+    try:
+        extractor = VideoExtractor()
+        success, message = extractor.authenticate_with_google()
+        extractor.close()
+        
+        if success:
+            return jsonify({'success': True, 'message': message})
+        else:
+            return jsonify({'success': False, 'error': message}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/meetings')
@@ -134,10 +153,12 @@ def download_worker(session_id, meeting_ids, options, cfg):
         
         # Initialize video extractor if needed
         if options.get('video'):
-            if not cfg.get('fathom_email') or not cfg.get('fathom_password'):
-                q.put({'type': 'error', 'message': 'Fathom credentials required for video download'})
+            # Check if Google session exists
+            session_file = os.path.join(os.path.dirname(__file__), '.browser_session', 'state.json')
+            if not os.path.exists(session_file):
+                q.put({'type': 'error', 'message': 'Google authentication required for video download. Click "Sign in with Google" first.'})
                 return
-            video_extractor = VideoExtractor(cfg['fathom_email'], cfg['fathom_password'])
+            video_extractor = VideoExtractor()
         
         total = len(meeting_ids)
         

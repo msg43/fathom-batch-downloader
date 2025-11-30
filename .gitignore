@@ -5,6 +5,9 @@ downloads/
 config.json
 .env
 
+# Browser session (Google OAuth)
+.browser_session/
+
 # Python
 __pycache__/
 *.py[cod]

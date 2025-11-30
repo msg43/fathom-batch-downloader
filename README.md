@@ -58,8 +58,8 @@ A local web application to batch download your meeting recordings, transcripts, 
 2. **Open your browser** and go to [http://localhost:5000](http://localhost:5000)
 
 3. **Configure your credentials**
-   - Enter your Fathom API key
-   - For video downloads: enter your Fathom email and password
+   - Enter your Fathom API key and click "Save Configuration"
+   - For video downloads: Click "Sign in with Google" - a browser window will open for you to authenticate with your Google account
 
 4. **Load your meetings** by clicking "Load Meetings"
 
@@ -97,13 +97,13 @@ Configuration is stored in `config.json` (automatically created, gitignored):
 
 ```json
 {
-  "api_key": "your-fathom-api-key",
-  "fathom_email": "your@email.com",
-  "fathom_password": "your-password"
+  "api_key": "your-fathom-api-key"
 }
 ```
 
-**Note:** Credentials are stored locally and never transmitted anywhere except to Fathom's servers.
+Google authentication session is stored in `.browser_session/` (also gitignored).
+
+**Note:** All data is stored locally and never transmitted anywhere except to Fathom's servers.
 
 ## API Reference
 
@@ -120,8 +120,8 @@ This app uses the [Fathom API](https://developers.fathom.ai/):
 - Check that there are no extra spaces in the key
 
 ### Video download fails
-- Ensure your Fathom email and password are correct
-- The app needs to log into Fathom to access video files
+- Make sure you've signed in with Google by clicking the "Sign in with Google" button
+- If your session expired, click the button again to re-authenticate
 - Some videos may be restricted or unavailable
 
 ### Rate limiting
