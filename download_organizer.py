@@ -169,22 +169,29 @@ class DownloadOrganizer:
         json_path = os.path.join(folder_path, 'summary.json')
         self._safe_write_json(json_path, summary)
         
-        # Try various field names the API might use
-        template_name = summary.get('template_name') or summary.get('template') or 'general'
-        
         def get_string_content(obj, *keys):
             """Extract string content from object, trying multiple keys"""
+            if not isinstance(obj, dict):
+                return ''
             for key in keys:
-                val = obj.get(key) if isinstance(obj, dict) else None
+                val = obj.get(key)
                 if val and isinstance(val, str):
                     return val
             return ''
         
-        content = get_string_content(summary, 'markdown_formatted', 'markdown', 'content', 'text', 'summary')
+        # The API returns {"summary": {"template_name": ..., "markdown_formatted": ...}}
+        # Check if summary is nested under a 'summary' key
+        inner_summary = summary.get('summary') if isinstance(summary.get('summary'), dict) else summary
         
-        # If still empty, try to extract from nested structure
+        template_name = get_string_content(inner_summary, 'template_name', 'template') or 'general'
+        content = get_string_content(inner_summary, 'markdown_formatted', 'markdown', 'content', 'text')
+        
+        # If still empty, try top-level keys
+        if not content:
+            content = get_string_content(summary, 'markdown_formatted', 'markdown', 'content', 'text')
+        
+        # If still empty, try other nested structures
         if not content and isinstance(summary, dict):
-            # Check for default_summary or similar nested structures
             for key in ['default_summary', 'summaries', 'data']:
                 if key in summary and isinstance(summary[key], dict):
                     content = get_string_content(summary[key], 'markdown_formatted', 'markdown', 'content', 'text')

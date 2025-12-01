@@ -311,7 +311,6 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
     
     finally:
         # Keep queue alive for a bit to ensure client gets final message
-        import time
         time.sleep(2)
         if session_id in progress_queues:
             del progress_queues[session_id]
