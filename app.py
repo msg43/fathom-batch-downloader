@@ -272,14 +272,23 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                 
                 # Download video
                 if options.get('video') and video_extractor:
-                    update_progress(4, f'[{i+1}/{total}] Downloading video (may take a few minutes)...')
                     video_url = meeting.get('url')
                     if video_url:
-                        success, msg = video_extractor.download_video(video_url, folder_path)
+                        # Create progress callback for video download
+                        last_reported = [0]
+                        def video_progress(bytes_downloaded):
+                            mb = bytes_downloaded // 1_000_000
+                            # Only report every 5MB to avoid flooding
+                            if mb >= last_reported[0] + 5:
+                                last_reported[0] = mb
+                                q.put({'type': 'status', 'message': f'Downloading video: {mb}MB...'})
+                        
+                        q.put({'type': 'status', 'message': f'[{i+1}/{total}] Starting video download...'})
+                        success, msg = video_extractor.download_video(video_url, folder_path, progress_callback=video_progress)
                         if not success:
                             q.put({'type': 'warning', 'message': f'Video download failed: {msg}'})
                         else:
-                            q.put({'type': 'status', 'message': f'Video downloaded successfully'})
+                            q.put({'type': 'status', 'message': msg})
                         # Extra delay after video downloads to avoid overloading servers
                         time.sleep(VIDEO_DOWNLOAD_DELAY)
                 

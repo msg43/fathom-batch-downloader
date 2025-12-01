@@ -267,7 +267,8 @@ class VideoExtractor:
         self, 
         fathom_url: str, 
         output_folder: str,
-        filename: str = "video.mp4"
+        filename: str = "video.mp4",
+        progress_callback: callable = None
     ) -> Tuple[bool, str]:
         """
         Download video from a Fathom page to the specified folder
@@ -295,9 +296,9 @@ class VideoExtractor:
         
         # Check if it's an HLS stream
         if '.m3u8' in video_url.lower():
-            return self._download_hls(video_url, output_path)
+            return self._download_hls(video_url, output_path, progress_callback)
         else:
-            return self._download_direct(video_url, output_path)
+            return self._download_direct(video_url, output_path, progress_callback)
     
     def _get_duration(self, path_or_url: str, is_url: bool = False) -> Optional[float]:
         """Get video duration in seconds using ffprobe"""
@@ -427,8 +428,10 @@ class VideoExtractor:
         
         return None
     
-    def _download_hls(self, m3u8_url: str, output_path: str) -> Tuple[bool, str]:
-        """Download HLS stream using ffmpeg."""
+    def _download_hls(self, m3u8_url: str, output_path: str, progress_callback: callable = None) -> Tuple[bool, str]:
+        """Download HLS stream using ffmpeg with progress monitoring."""
+        import threading
+        
         try:
             # Find ffmpeg
             ffmpeg = self._find_ffmpeg()
@@ -457,38 +460,62 @@ class VideoExtractor:
                 temp_path
             ]
             
-            # Run ffmpeg
-            result = subprocess.run(
+            # Run ffmpeg with progress monitoring
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 minute timeout
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
             )
             
-            if result.returncode != 0:
+            # Monitor file size in background
+            stop_monitoring = threading.Event()
+            
+            def monitor_progress():
+                last_size = 0
+                while not stop_monitoring.is_set():
+                    if os.path.exists(temp_path):
+                        size = os.path.getsize(temp_path)
+                        if size != last_size and progress_callback:
+                            progress_callback(size)
+                            last_size = size
+                    stop_monitoring.wait(1)  # Check every second
+            
+            if progress_callback:
+                monitor_thread = threading.Thread(target=monitor_progress)
+                monitor_thread.start()
+            
+            # Wait for ffmpeg to complete
+            try:
+                stdout, stderr = process.communicate(timeout=1800)  # 30 minute timeout
+            finally:
+                stop_monitoring.set()
+                if progress_callback:
+                    monitor_thread.join(timeout=2)
+            
+            if process.returncode != 0:
                 # Try without the bsf filter
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                    
                 cmd_simple = [
                     ffmpeg,
                     '-y',
                     '-headers', f'Cookie: {cookie_str}\r\nReferer: https://fathom.video/\r\n',
                     '-i', m3u8_url,
                     '-c', 'copy',
-                    '-f', 'mp4',  # Explicitly specify MP4 format
+                    '-f', 'mp4',
                     temp_path
                 ]
-                result = subprocess.run(cmd_simple, capture_output=True, text=True, timeout=600)
+                result = subprocess.run(cmd_simple, capture_output=True, text=True, timeout=1800)
                 
                 if result.returncode != 0:
-                    # Clean up temp file
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
-                    # Get last 500 chars of stderr for more useful error info
                     error_msg = result.stderr[-500:] if len(result.stderr) > 500 else result.stderr
                     return False, f"ffmpeg failed: {error_msg}"
             
             # Verify temp file was created and move to final location
             if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                # Move temp to final destination
                 if os.path.exists(output_path):
                     os.remove(output_path)
                 os.rename(temp_path, output_path)
@@ -500,12 +527,12 @@ class VideoExtractor:
         except FileNotFoundError:
             return False, "ffmpeg not found. Please install ffmpeg to download videos."
         except subprocess.TimeoutExpired:
-            return False, "Video download timed out (exceeded 10 minutes)"
+            return False, "Video download timed out (exceeded 30 minutes)"
         except Exception as e:
             return False, f"HLS download error: {str(e)}"
     
-    def _download_direct(self, video_url: str, output_path: str) -> Tuple[bool, str]:
-        """Download video directly via HTTP."""
+    def _download_direct(self, video_url: str, output_path: str, progress_callback: callable = None) -> Tuple[bool, str]:
+        """Download video directly via HTTP with progress monitoring."""
         temp_path = output_path + '.tmp'
         try:
             # Use cookies from browser session for authenticated download
@@ -527,11 +554,15 @@ class VideoExtractor:
             if response.status_code != 200:
                 return False, f"Download failed with status {response.status_code}"
             
-            # Write to temp file first
+            # Write to temp file with progress updates
+            downloaded = 0
             with open(temp_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=65536):  # 64KB chunks
                     if chunk:
                         f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_callback:
+                            progress_callback(downloaded)
             
             # Move temp to final destination
             if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
