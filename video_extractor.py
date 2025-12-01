@@ -453,6 +453,7 @@ class VideoExtractor:
                 '-i', m3u8_url,
                 '-c', 'copy',  # Copy streams without re-encoding
                 '-bsf:a', 'aac_adtstoasc',  # Fix audio for MP4 container
+                '-f', 'mp4',  # Explicitly specify MP4 format (needed for .tmp extension)
                 temp_path
             ]
             
@@ -472,6 +473,7 @@ class VideoExtractor:
                     '-headers', f'Cookie: {cookie_str}\r\nReferer: https://fathom.video/\r\n',
                     '-i', m3u8_url,
                     '-c', 'copy',
+                    '-f', 'mp4',  # Explicitly specify MP4 format
                     temp_path
                 ]
                 result = subprocess.run(cmd_simple, capture_output=True, text=True, timeout=600)
@@ -480,7 +482,9 @@ class VideoExtractor:
                     # Clean up temp file
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
-                    return False, f"ffmpeg failed: {result.stderr[:200]}"
+                    # Get last 500 chars of stderr for more useful error info
+                    error_msg = result.stderr[-500:] if len(result.stderr) > 500 else result.stderr
+                    return False, f"ffmpeg failed: {error_msg}"
             
             # Verify temp file was created and move to final location
             if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
