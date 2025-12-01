@@ -171,31 +171,27 @@ class DownloadOrganizer:
         
         # Try various field names the API might use
         template_name = summary.get('template_name') or summary.get('template') or 'general'
-        content = (
-            summary.get('markdown_formatted') or 
-            summary.get('markdown') or 
-            summary.get('content') or 
-            summary.get('text') or 
-            summary.get('summary') or
-            ''
-        )
+        
+        def get_string_content(obj, *keys):
+            """Extract string content from object, trying multiple keys"""
+            for key in keys:
+                val = obj.get(key) if isinstance(obj, dict) else None
+                if val and isinstance(val, str):
+                    return val
+            return ''
+        
+        content = get_string_content(summary, 'markdown_formatted', 'markdown', 'content', 'text', 'summary')
         
         # If still empty, try to extract from nested structure
         if not content and isinstance(summary, dict):
             # Check for default_summary or similar nested structures
             for key in ['default_summary', 'summaries', 'data']:
                 if key in summary and isinstance(summary[key], dict):
-                    content = (
-                        summary[key].get('markdown_formatted') or
-                        summary[key].get('markdown') or
-                        summary[key].get('content') or
-                        summary[key].get('text') or
-                        ''
-                    )
+                    content = get_string_content(summary[key], 'markdown_formatted', 'markdown', 'content', 'text')
                     if content:
                         break
         
-        has_content = bool(content and content.strip())
+        has_content = bool(content and isinstance(content, str) and content.strip())
         
         # If still empty, just dump the whole thing as JSON in markdown
         if not has_content:

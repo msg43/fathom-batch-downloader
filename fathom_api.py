@@ -23,14 +23,15 @@ class FathomAPI:
         })
         self._last_request_time = 0
     
-    def _request(self, method: str, endpoint: str, retries: int = 3, **kwargs) -> Tuple[Optional[Dict], Optional[str]]:
+    def _request(self, method: str, endpoint: str, retries: int = 3, skip_delay: bool = False, **kwargs) -> Tuple[Optional[Dict], Optional[str]]:
         """Make a request to the Fathom API with rate limit handling"""
         url = f"{self.BASE_URL}{endpoint}"
         
-        # Ensure minimum delay between requests
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self.REQUEST_DELAY:
-            time.sleep(self.REQUEST_DELAY - elapsed)
+        # Ensure minimum delay between requests (skip for listing operations)
+        if not skip_delay:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self.REQUEST_DELAY:
+                time.sleep(self.REQUEST_DELAY - elapsed)
         
         for attempt in range(retries):
             try:
@@ -92,7 +93,7 @@ class FathomAPI:
             if cursor:
                 params['cursor'] = cursor
             
-            data, error = self._request('GET', '/meetings', params=params)
+            data, error = self._request('GET', '/meetings', params=params, skip_delay=True)
             
             if error:
                 return None, error
