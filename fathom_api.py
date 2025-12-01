@@ -4,6 +4,7 @@ Handles all communication with the Fathom API
 """
 
 import requests
+import time
 from typing import Optional, Tuple, List, Dict, Any
 
 
@@ -11,6 +12,7 @@ class FathomAPI:
     """Client for the Fathom API"""
     
     BASE_URL = "https://api.fathom.ai/external/v1"
+    REQUEST_DELAY = 0.5  # Delay between requests to avoid rate limits
     
     def __init__(self, api_key: str):
         self.api_key = api_key
@@ -19,33 +21,56 @@ class FathomAPI:
             'X-Api-Key': api_key,
             'Content-Type': 'application/json'
         })
+        self._last_request_time = 0
     
-    def _request(self, method: str, endpoint: str, **kwargs) -> Tuple[Optional[Dict], Optional[str]]:
-        """Make a request to the Fathom API"""
+    def _request(self, method: str, endpoint: str, retries: int = 3, **kwargs) -> Tuple[Optional[Dict], Optional[str]]:
+        """Make a request to the Fathom API with rate limit handling"""
         url = f"{self.BASE_URL}{endpoint}"
         
-        try:
-            response = self.session.request(method, url, **kwargs)
-            
-            if response.status_code == 401:
-                return None, "Invalid API key"
-            elif response.status_code == 429:
-                return None, "Rate limit exceeded. Please wait and try again."
-            elif response.status_code >= 400:
-                try:
-                    error_data = response.json()
-                    return None, error_data.get('message', f"API error: {response.status_code}")
-                except:
-                    return None, f"API error: {response.status_code}"
-            
-            return response.json(), None
-            
-        except requests.exceptions.ConnectionError:
-            return None, "Could not connect to Fathom API"
-        except requests.exceptions.Timeout:
-            return None, "Request timed out"
-        except Exception as e:
-            return None, str(e)
+        # Ensure minimum delay between requests
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self.REQUEST_DELAY:
+            time.sleep(self.REQUEST_DELAY - elapsed)
+        
+        for attempt in range(retries):
+            try:
+                self._last_request_time = time.time()
+                response = self.session.request(method, url, **kwargs)
+                
+                if response.status_code == 401:
+                    return None, "Invalid API key"
+                elif response.status_code == 429:
+                    # Rate limited - wait and retry with exponential backoff
+                    if attempt < retries - 1:
+                        wait_time = (2 ** attempt) * 2  # 2, 4, 8 seconds
+                        time.sleep(wait_time)
+                        continue
+                    return None, "Rate limit exceeded. Please wait and try again."
+                elif response.status_code == 404:
+                    return None, "Not found"
+                elif response.status_code >= 400:
+                    try:
+                        error_data = response.json()
+                        return None, error_data.get('message', f"API error: {response.status_code}")
+                    except:
+                        return None, f"API error: {response.status_code}"
+                
+                return response.json(), None
+                
+            except requests.exceptions.ConnectionError:
+                if attempt < retries - 1:
+                    time.sleep(1)
+                    continue
+                return None, "Could not connect to Fathom API"
+            except requests.exceptions.Timeout:
+                if attempt < retries - 1:
+                    time.sleep(1)
+                    continue
+                return None, "Request timed out"
+            except Exception as e:
+                return None, str(e)
+        
+        return None, "Max retries exceeded"
     
     def validate_key(self) -> Tuple[bool, Optional[str]]:
         """Validate the API key by making a test request"""

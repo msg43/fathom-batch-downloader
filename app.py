@@ -16,8 +16,8 @@ from download_organizer import DownloadOrganizer
 app = Flask(__name__)
 
 # Delay between processing each meeting (seconds) - helps avoid rate limits
-DOWNLOAD_DELAY = 1  # seconds between meetings
-VIDEO_DOWNLOAD_DELAY = 3  # extra seconds after video downloads (to be nice to servers)
+DOWNLOAD_DELAY = 2  # seconds between meetings
+VIDEO_DOWNLOAD_DELAY = 5  # extra seconds after video downloads (to be nice to servers)
 
 # Global progress queue for SSE
 progress_queues = {}
