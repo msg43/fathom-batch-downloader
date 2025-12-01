@@ -7,7 +7,7 @@ import os
 import re
 import json
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 
 class DownloadOrganizer:
@@ -158,8 +158,11 @@ class DownloadOrganizer:
         
         return json_path, txt_path
     
-    def save_summary(self, folder_path: str, summary: Dict[str, Any]) -> str:
-        """Save summary as markdown file. Skips if file already exists."""
+    def save_summary(self, folder_path: str, summary: Dict[str, Any]) -> Tuple[str, bool]:
+        """
+        Save summary as markdown file. Skips if file already exists.
+        Returns (filepath, has_content) - has_content is False if summary was empty.
+        """
         filepath = os.path.join(folder_path, 'summary.md')
         
         # Also save raw JSON for debugging
@@ -192,14 +195,16 @@ class DownloadOrganizer:
                     if content:
                         break
         
+        has_content = bool(content and content.strip())
+        
         # If still empty, just dump the whole thing as JSON in markdown
-        if not content:
-            content = f"```json\n{json.dumps(summary, indent=2)}\n```"
+        if not has_content:
+            content = f"```json\n{json.dumps(summary, indent=2)}\n```\n\n*Note: Could not find summary content in expected fields. Raw API response shown above.*"
         
         full_content = f"# Meeting Summary\n\n*Template: {template_name}*\n\n{content}"
         self._safe_write(filepath, full_content)
         
-        return filepath
+        return filepath, has_content
     
     def save_action_items(self, folder_path: str, action_items: List[Dict]) -> tuple:
         """

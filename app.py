@@ -260,7 +260,9 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                 summary = meeting.get('summary') or meeting.get('default_summary')
                 if options.get('summary') and summary and isinstance(summary, dict):
                     update_progress(2, f'[{i+1}/{total}] Saving summary...')
-                    organizer.save_summary(folder_path, summary)
+                    _, has_content = organizer.save_summary(folder_path, summary)
+                    if not has_content:
+                        q.put({'type': 'warning', 'message': f'Summary was empty - raw JSON saved for debugging'})
                 
                 # Save action items
                 action_items = meeting.get('action_items')
