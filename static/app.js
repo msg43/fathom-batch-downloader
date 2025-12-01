@@ -531,11 +531,15 @@ async function startDownload() {
     elements.progressLog.innerHTML = '';
     
     try {
+        // Get meeting info for selected meetings
+        const selectedMeetings = meetings.filter(m => selectedMeetingIds.has(m.id));
+        
         const response = await fetch('/api/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 meeting_ids: Array.from(selectedMeetingIds),
+                meetings_info: selectedMeetings,
                 options: options
             })
         });

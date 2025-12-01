@@ -104,50 +104,39 @@ class FathomAPI:
     def get_meeting_details(
         self, 
         recording_id: int, 
-        options: Dict[str, bool]
+        options: Dict[str, bool],
+        meeting_info: Optional[Dict] = None
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """
         Fetch detailed meeting data including transcript, summary, etc.
+        If meeting_info is provided, use it as base and fetch additional data.
         """
-        params = {
-            'include_transcript': options.get('transcript', False),
-            'include_summary': options.get('summary', False),
-            'include_action_items': options.get('action_items', False)
-        }
+        # Use provided meeting info as base, or create minimal structure
+        meeting = meeting_info.copy() if meeting_info else {'recording_id': recording_id}
         
-        # First get the meeting from the list
-        data, error = self._request('GET', '/meetings', params=params)
+        # Fetch transcript if requested
+        if options.get('transcript'):
+            transcript, error = self.get_transcript(recording_id)
+            if transcript:
+                meeting['transcript'] = transcript
+            elif error:
+                meeting['transcript_error'] = error
         
-        if error:
-            return None, error
+        # Fetch summary if requested  
+        if options.get('summary'):
+            summary, error = self.get_summary(recording_id)
+            if summary:
+                meeting['summary'] = summary
+            elif error:
+                meeting['summary_error'] = error
         
-        # Find the specific meeting
-        items = data.get('items', [])
-        meeting = None
-        
-        # We need to paginate to find the meeting
-        cursor = data.get('next_cursor')
-        
-        for item in items:
-            if item.get('recording_id') == recording_id:
-                meeting = item
-                break
-        
-        # If not found in first page, keep looking
-        while not meeting and cursor:
-            data, error = self._request('GET', '/meetings', params={**params, 'cursor': cursor})
-            if error:
-                break
-            
-            for item in data.get('items', []):
-                if item.get('recording_id') == recording_id:
-                    meeting = item
-                    break
-            
-            cursor = data.get('next_cursor')
-        
-        if not meeting:
-            return None, f"Meeting {recording_id} not found"
+        # Fetch action items if requested
+        if options.get('action_items'):
+            action_items, error = self.get_action_items(recording_id)
+            if action_items:
+                meeting['action_items'] = action_items
+            elif error:
+                meeting['action_items_error'] = error
         
         return meeting, None
     
@@ -158,4 +147,8 @@ class FathomAPI:
     def get_summary(self, recording_id: int) -> Tuple[Optional[Dict], Optional[str]]:
         """Fetch summary for a specific recording"""
         return self._request('GET', f'/recordings/{recording_id}/summary')
+    
+    def get_action_items(self, recording_id: int) -> Tuple[Optional[Dict], Optional[str]]:
+        """Fetch action items for a specific recording"""
+        return self._request('GET', f'/recordings/{recording_id}/action_items')
 

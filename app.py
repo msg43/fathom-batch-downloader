@@ -138,6 +138,7 @@ def start_download():
     """Start downloading selected meetings"""
     data = request.json
     meeting_ids = data.get('meeting_ids', [])
+    meetings_info = data.get('meetings_info', [])
     options = data.get('options', {})
     
     if not meeting_ids:
@@ -152,10 +153,13 @@ def start_download():
     session_id = str(uuid.uuid4())
     progress_queues[session_id] = queue.Queue()
     
+    # Create a lookup dict for meeting info
+    meetings_lookup = {m.get('id') or m.get('recording_id'): m for m in meetings_info}
+    
     # Start download in background thread
     thread = threading.Thread(
         target=download_worker,
-        args=(session_id, meeting_ids, options, cfg)
+        args=(session_id, meeting_ids, options, cfg, meetings_lookup)
     )
     thread.daemon = True
     thread.start()
@@ -163,8 +167,9 @@ def start_download():
     return jsonify({'session_id': session_id})
 
 
-def download_worker(session_id, meeting_ids, options, cfg):
+def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None):
     """Background worker to download meetings"""
+    meetings_lookup = meetings_lookup or {}
     q = progress_queues.get(session_id)
     if not q:
         return
@@ -205,9 +210,16 @@ def download_worker(session_id, meeting_ids, options, cfg):
                     'message': f'Processing meeting {i + 1} of {total}...'
                 })
                 
-                meeting, error = api.get_meeting_details(meeting_id, options)
+                # Get meeting info from lookup (passed from frontend) or fetch fresh
+                meeting_info = meetings_lookup.get(meeting_id)
+                meeting, error = api.get_meeting_details(meeting_id, options, meeting_info)
                 if error:
                     q.put({'type': 'warning', 'message': f'Error fetching meeting {meeting_id}: {error}'})
+                    continue
+                
+                # If we don't have basic meeting info, we can't create a folder
+                if not meeting.get('title') and not meeting.get('meeting_title') and not meeting.get('date'):
+                    q.put({'type': 'warning', 'message': f'Skipping meeting {meeting_id}: No meeting info available'})
                     continue
                 
                 # Create folder for this meeting
