@@ -86,10 +86,11 @@ class DownloadOrganizer:
         
         return filepath
     
-    def save_transcript(self, folder_path: str, transcript: List[Dict]) -> tuple:
+    def save_transcript(self, folder_path: str, transcript) -> tuple:
         """
         Save transcript in both JSON and human-readable text formats
         Returns (json_path, txt_path)
+        Handles various transcript formats from Fathom API
         """
         # Save JSON version
         json_path = os.path.join(folder_path, 'transcript.json')
@@ -99,11 +100,41 @@ class DownloadOrganizer:
         # Save human-readable text version
         txt_path = os.path.join(folder_path, 'transcript.txt')
         with open(txt_path, 'w', encoding='utf-8') as f:
-            for entry in transcript:
+            # Handle different transcript formats
+            entries = transcript
+            
+            # If transcript is a dict with 'entries' or 'segments' key
+            if isinstance(transcript, dict):
+                entries = transcript.get('entries') or transcript.get('segments') or transcript.get('transcript') or []
+            
+            # If entries is still not a list, try to handle it
+            if not isinstance(entries, list):
+                f.write(str(entries))
+                return json_path, txt_path
+            
+            for entry in entries:
+                # Skip non-dict entries
+                if isinstance(entry, str):
+                    f.write(f"{entry}\n\n")
+                    continue
+                    
+                if not isinstance(entry, dict):
+                    continue
+                
+                # Try different field names for speaker
                 speaker = entry.get('speaker', {})
-                speaker_name = speaker.get('display_name', 'Unknown')
-                timestamp = entry.get('timestamp', '')
-                text = entry.get('text', '')
+                if isinstance(speaker, str):
+                    speaker_name = speaker
+                elif isinstance(speaker, dict):
+                    speaker_name = speaker.get('display_name') or speaker.get('name', 'Unknown')
+                else:
+                    speaker_name = 'Unknown'
+                
+                # Try different field names for timestamp
+                timestamp = entry.get('timestamp') or entry.get('start_time') or entry.get('time', '')
+                
+                # Try different field names for text
+                text = entry.get('text') or entry.get('content') or entry.get('transcript', '')
                 
                 f.write(f"[{timestamp}] {speaker_name}:\n")
                 f.write(f"{text}\n\n")

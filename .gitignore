@@ -31,3 +31,4 @@ Thumbs.db
 # Playwright
 playwright/.cache/
 
+/Volumes/

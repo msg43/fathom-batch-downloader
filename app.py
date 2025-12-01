@@ -157,6 +157,9 @@ def start_download():
     # Note: meeting IDs may come as strings or ints, so normalize to strings
     meetings_lookup = {}
     for m in meetings_info:
+        # Skip if not a dict (invalid data)
+        if not isinstance(m, dict):
+            continue
         mid = m.get('id') or m.get('recording_id')
         if mid is not None:
             meetings_lookup[str(mid)] = m
@@ -234,19 +237,22 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                 organizer.save_metadata(folder_path, meeting)
                 
                 # Save transcript
-                if options.get('transcript') and meeting.get('transcript'):
+                transcript = meeting.get('transcript')
+                if options.get('transcript') and transcript and isinstance(transcript, dict):
                     q.put({'type': 'status', 'message': f'Saving transcript...'})
-                    organizer.save_transcript(folder_path, meeting['transcript'])
+                    organizer.save_transcript(folder_path, transcript)
                 
-                # Save summary
-                if options.get('summary') and meeting.get('default_summary'):
+                # Save summary (check both 'summary' and 'default_summary' keys)
+                summary = meeting.get('summary') or meeting.get('default_summary')
+                if options.get('summary') and summary and isinstance(summary, dict):
                     q.put({'type': 'status', 'message': f'Saving summary...'})
-                    organizer.save_summary(folder_path, meeting['default_summary'])
+                    organizer.save_summary(folder_path, summary)
                 
                 # Save action items
-                if options.get('action_items') and meeting.get('action_items'):
+                action_items = meeting.get('action_items')
+                if options.get('action_items') and action_items and isinstance(action_items, (dict, list)):
                     q.put({'type': 'status', 'message': f'Saving action items...'})
-                    organizer.save_action_items(folder_path, meeting['action_items'])
+                    organizer.save_action_items(folder_path, action_items)
                 
                 # Download video
                 if options.get('video') and video_extractor:
@@ -266,6 +272,9 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                     time.sleep(DOWNLOAD_DELAY)
                 
             except Exception as e:
+                import traceback
+                print(f"ERROR processing meeting {meeting_id}: {str(e)}", flush=True)
+                print(traceback.format_exc(), flush=True)
                 q.put({'type': 'warning', 'message': f'Error processing meeting: {str(e)}'})
         
         # Cleanup

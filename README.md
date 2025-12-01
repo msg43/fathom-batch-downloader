@@ -9,18 +9,32 @@ A local web application to batch download your meeting recordings, transcripts, 
 ## Features
 
 - 📋 **List all your Fathom meetings** with name, date, and participant info
+- 🔍 **Boolean search filter** - Find meetings using AND, OR, NOT operators
 - ☑️ **Batch select meetings** with Select All / Select None controls
 - 🎥 **Download video recordings** (extracted via browser automation)
 - 📝 **Export transcripts** in both JSON and human-readable text formats
 - 📋 **Save AI summaries** as markdown files
 - ✅ **Export action items** with assignees and timestamps
 - 📁 **Organized folder structure** - each meeting gets its own folder
+- 📂 **Configurable download directory** - Save files anywhere on your system
+- ⏱️ **Rate limit handling** - Automatic retry with delays to avoid API limits
 
 ## Prerequisites
 
 - Python 3.10 or higher
 - A Fathom account with API access
 - Your Fathom API key (from [Fathom Settings](https://fathom.video/settings))
+- **ffmpeg** (required for video downloads)
+  ```bash
+  # macOS
+  brew install ffmpeg
+  
+  # Ubuntu/Debian
+  sudo apt install ffmpeg
+  
+  # Windows (with Chocolatey)
+  choco install ffmpeg
+  ```
 
 ## Installation
 
@@ -63,19 +77,24 @@ A local web application to batch download your meeting recordings, transcripts, 
 
 4. **Load your meetings** by clicking "Load Meetings"
 
-5. **Select meetings** to download using checkboxes
+5. **Filter meetings** (optional) using the search bar:
+   - `standup AND team` - must contain both words
+   - `review OR retro` - must contain either word
+   - `meeting NOT cancelled` - must contain "meeting", must NOT contain "cancelled"
 
-6. **Choose what to download**
+6. **Select meetings** to download using checkboxes
+
+7. **Choose what to download**
    - Video Recording
    - Transcript
    - Summary
    - Action Items
 
-7. **Click "Download Selected Meetings"** and wait for the process to complete
+8. **Click "Download Selected Meetings"** and wait for the process to complete
 
 ## Download Output Structure
 
-Downloads are saved to the `downloads/` folder with this structure:
+Downloads are saved to the configured download directory (default: `downloads/` folder) with this structure:
 
 ```
 downloads/
@@ -97,9 +116,15 @@ Configuration is stored in `config.json` (automatically created, gitignored):
 
 ```json
 {
-  "api_key": "your-fathom-api-key"
+  "api_key": "your-fathom-api-key",
+  "download_dir": "~/Downloads/fathom"
 }
 ```
+
+- **api_key**: Your Fathom API key
+- **download_dir**: Where to save downloads (optional, defaults to `./downloads`)
+  - Supports `~` for home directory (e.g., `~/Downloads/fathom`)
+  - Can be absolute or relative path
 
 Google authentication session is stored in `.browser_session/` (also gitignored).
 
