@@ -5,6 +5,7 @@ A web app to batch download videos and data from Fathom.video
 
 import os
 import json
+import time
 import queue
 import threading
 from flask import Flask, render_template, request, jsonify, Response
@@ -13,6 +14,10 @@ from video_extractor import VideoExtractor
 from download_organizer import DownloadOrganizer
 
 app = Flask(__name__)
+
+# Delay between processing each meeting (seconds) - helps avoid rate limits
+DOWNLOAD_DELAY = 1  # seconds between meetings
+VIDEO_DOWNLOAD_DELAY = 3  # extra seconds after video downloads (to be nice to servers)
 
 # Global progress queue for SSE
 progress_queues = {}
@@ -162,6 +167,13 @@ def download_worker(session_id, meeting_ids, options, cfg):
         
         total = len(meeting_ids)
         
+        # Warn user if downloading many videos
+        if options.get('video') and total > 5:
+            q.put({
+                'type': 'status',
+                'message': f'Downloading {total} meetings with videos. This may take a while (videos are downloaded sequentially with delays to avoid rate limits).'
+            })
+        
         for i, meeting_id in enumerate(meeting_ids):
             try:
                 # Get meeting details
@@ -200,12 +212,20 @@ def download_worker(session_id, meeting_ids, options, cfg):
                 
                 # Download video
                 if options.get('video') and video_extractor:
-                    q.put({'type': 'status', 'message': f'Extracting video URL...'})
+                    q.put({'type': 'status', 'message': f'Downloading video (this may take a few minutes)...'})
                     video_url = meeting.get('url')
                     if video_url:
                         success, msg = video_extractor.download_video(video_url, folder_path)
                         if not success:
                             q.put({'type': 'warning', 'message': f'Video download failed: {msg}'})
+                        else:
+                            q.put({'type': 'status', 'message': f'Video downloaded successfully'})
+                        # Extra delay after video downloads to avoid overloading servers
+                        time.sleep(VIDEO_DOWNLOAD_DELAY)
+                
+                # Small delay between meetings to be nice to Fathom's servers
+                if i < total - 1:  # Don't delay after the last meeting
+                    time.sleep(DOWNLOAD_DELAY)
                 
             except Exception as e:
                 q.put({'type': 'warning', 'message': f'Error processing meeting: {str(e)}'})
