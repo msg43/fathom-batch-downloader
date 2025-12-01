@@ -32,6 +32,9 @@ def get_downloads_dir():
     cfg = load_config()
     download_dir = cfg.get('download_dir', '').strip()
     
+    # Remove any accidental quotes from the path
+    download_dir = download_dir.strip("'\"")
+    
     if download_dir:
         # Expand ~ to home directory
         download_dir = os.path.expanduser(download_dir)
