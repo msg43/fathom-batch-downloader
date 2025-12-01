@@ -213,13 +213,24 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
         
         for i, meeting_id in enumerate(meeting_ids):
             try:
+                # Calculate steps for this meeting (for progress bar)
+                steps_per_meeting = 5  # fetch, transcript, summary, action_items, video
+                base_progress = i * steps_per_meeting
+                total_steps = total * steps_per_meeting
+                
+                def update_progress(step, message):
+                    progress = ((base_progress + step) / total_steps) * 100
+                    q.put({
+                        'type': 'progress',
+                        'current': base_progress + step,
+                        'total': total_steps,
+                        'percent': progress,
+                        'message': message
+                    })
+                
                 # Get meeting details
-                q.put({
-                    'type': 'progress',
-                    'current': i + 1,
-                    'total': total,
-                    'message': f'Processing meeting {i + 1} of {total}...'
-                })
+                meeting_title = meetings_lookup.get(str(meeting_id), {}).get('title', f'Meeting {i+1}')
+                update_progress(0, f'[{i+1}/{total}] Fetching: {meeting_title[:40]}...')
                 
                 # Get meeting info from lookup (passed from frontend) or fetch fresh
                 meeting_info = meetings_lookup.get(str(meeting_id))
@@ -242,24 +253,24 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                 # Save transcript
                 transcript = meeting.get('transcript')
                 if options.get('transcript') and transcript and isinstance(transcript, dict):
-                    q.put({'type': 'status', 'message': f'Saving transcript...'})
+                    update_progress(1, f'[{i+1}/{total}] Saving transcript...')
                     organizer.save_transcript(folder_path, transcript)
                 
                 # Save summary (check both 'summary' and 'default_summary' keys)
                 summary = meeting.get('summary') or meeting.get('default_summary')
                 if options.get('summary') and summary and isinstance(summary, dict):
-                    q.put({'type': 'status', 'message': f'Saving summary...'})
+                    update_progress(2, f'[{i+1}/{total}] Saving summary...')
                     organizer.save_summary(folder_path, summary)
                 
                 # Save action items
                 action_items = meeting.get('action_items')
                 if options.get('action_items') and action_items and isinstance(action_items, (dict, list)):
-                    q.put({'type': 'status', 'message': f'Saving action items...'})
+                    update_progress(3, f'[{i+1}/{total}] Saving action items...')
                     organizer.save_action_items(folder_path, action_items)
                 
                 # Download video
                 if options.get('video') and video_extractor:
-                    q.put({'type': 'status', 'message': f'Downloading video (this may take a few minutes)...'})
+                    update_progress(4, f'[{i+1}/{total}] Downloading video (may take a few minutes)...')
                     video_url = meeting.get('url')
                     if video_url:
                         success, msg = video_extractor.download_video(video_url, folder_path)
@@ -269,6 +280,9 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                             q.put({'type': 'status', 'message': f'Video downloaded successfully'})
                         # Extra delay after video downloads to avoid overloading servers
                         time.sleep(VIDEO_DOWNLOAD_DELAY)
+                
+                # Mark meeting complete
+                update_progress(5, f'[{i+1}/{total}] Complete!')
                 
                 # Small delay between meetings to be nice to Fathom's servers
                 if i < total - 1:  # Don't delay after the last meeting

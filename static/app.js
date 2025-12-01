@@ -559,9 +559,11 @@ async function startDownload() {
             
             switch (msg.type) {
                 case 'progress':
-                    const percent = (msg.current / msg.total) * 100;
+                    const percent = msg.percent || (msg.current / msg.total) * 100;
                     elements.progressBar.style.width = `${percent}%`;
                     elements.progressText.textContent = msg.message;
+                    // Also show percentage in the bar
+                    elements.progressBar.textContent = `${Math.round(percent)}%`;
                     break;
                     
                 case 'status':
