@@ -19,15 +19,12 @@ class DownloadOrganizer:
     
     def _safe_write(self, filepath: str, content: str, encoding: str = 'utf-8') -> bool:
         """
-        Write content to file only if new content is larger than existing.
+        Write content to file. Skips if file already exists with content.
         Returns True if file was written, False if skipped.
         """
-        new_size = len(content.encode(encoding))
-        
-        if os.path.exists(filepath):
-            existing_size = os.path.getsize(filepath)
-            if new_size <= existing_size:
-                return False  # Skip - existing file is same size or larger
+        # Skip if file exists and has content
+        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+            return False  # Skip - file already exists
         
         with open(filepath, 'w', encoding=encoding) as f:
             f.write(content)
@@ -35,7 +32,7 @@ class DownloadOrganizer:
     
     def _safe_write_json(self, filepath: str, data: Any) -> bool:
         """
-        Write JSON data to file only if new content is larger than existing.
+        Write JSON data to file. Skips if file already exists with content.
         Returns True if file was written, False if skipped.
         """
         content = json.dumps(data, indent=2, ensure_ascii=False)

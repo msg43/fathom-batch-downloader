@@ -272,7 +272,16 @@ class VideoExtractor:
         """
         Download video from a Fathom page to the specified folder
         Returns (success, message)
+        Skips download if file already exists with content.
         """
+        output_path = os.path.join(output_folder, filename)
+        
+        # Skip if file already exists and has content (> 1MB = likely complete)
+        if os.path.exists(output_path):
+            existing_size = os.path.getsize(output_path)
+            if existing_size > 1_000_000:  # 1MB threshold
+                return True, f"Video already exists ({existing_size // 1_000_000}MB), skipped"
+        
         video_url, error = self.extract_video_url(fathom_url)
         
         if error:
@@ -280,8 +289,6 @@ class VideoExtractor:
         
         if not video_url:
             return False, "No video URL found"
-        
-        output_path = os.path.join(output_folder, filename)
         
         # Check if it's an HLS stream
         if '.m3u8' in video_url.lower():
@@ -312,19 +319,14 @@ class VideoExtractor:
         return None
     
     def _download_hls(self, m3u8_url: str, output_path: str) -> Tuple[bool, str]:
-        """Download HLS stream using ffmpeg. Only overwrites if new file is larger."""
+        """Download HLS stream using ffmpeg."""
         try:
-            # Check if existing file exists
-            existing_size = 0
-            if os.path.exists(output_path):
-                existing_size = os.path.getsize(output_path)
-            
             # Find ffmpeg
             ffmpeg = self._find_ffmpeg()
             if not ffmpeg:
                 return False, "ffmpeg not found. Please install ffmpeg to download videos (brew install ffmpeg)."
             
-            # Download to temp file first to compare sizes
+            # Download to temp file first (safety against partial downloads)
             temp_path = output_path + '.tmp'
             
             # Build cookie string for ffmpeg
@@ -371,21 +373,14 @@ class VideoExtractor:
                         os.remove(temp_path)
                     return False, f"ffmpeg failed: {result.stderr[:200]}"
             
-            # Verify temp file was created and check size
+            # Verify temp file was created and move to final location
             if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                new_size = os.path.getsize(temp_path)
-                
-                # Only replace if new file is larger than existing
-                if new_size > existing_size:
-                    # Replace existing file with new one
-                    if os.path.exists(output_path):
-                        os.remove(output_path)
-                    os.rename(temp_path, output_path)
-                    return True, f"Video saved to {output_path}"
-                else:
-                    # Keep existing file, remove temp
-                    os.remove(temp_path)
-                    return True, f"Existing video is same size or larger, skipped"
+                # Move temp to final destination
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                os.rename(temp_path, output_path)
+                size_mb = os.path.getsize(output_path) // 1_000_000
+                return True, f"Video saved ({size_mb}MB)"
             else:
                 return False, "ffmpeg completed but no output file created"
                 
@@ -397,15 +392,9 @@ class VideoExtractor:
             return False, f"HLS download error: {str(e)}"
     
     def _download_direct(self, video_url: str, output_path: str) -> Tuple[bool, str]:
-        """Download video directly via HTTP. Only overwrites if new file is larger."""
+        """Download video directly via HTTP."""
+        temp_path = output_path + '.tmp'
         try:
-            # Check existing file size
-            existing_size = 0
-            if os.path.exists(output_path):
-                existing_size = os.path.getsize(output_path)
-            
-            temp_path = output_path + '.tmp'
-            
             # Use cookies from browser session for authenticated download
             cookies = {}
             if self.context:
@@ -425,32 +414,24 @@ class VideoExtractor:
             if response.status_code != 200:
                 return False, f"Download failed with status {response.status_code}"
             
-            # Write to temp file
+            # Write to temp file first
             with open(temp_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
             
-            # Check if new file is larger
-            if os.path.exists(temp_path):
-                new_size = os.path.getsize(temp_path)
-                
-                if new_size > existing_size:
-                    # Replace existing with new
-                    if os.path.exists(output_path):
-                        os.remove(output_path)
-                    os.rename(temp_path, output_path)
-                    return True, f"Video saved to {output_path}"
-                else:
-                    # Keep existing, remove temp
-                    os.remove(temp_path)
-                    return True, f"Existing video is same size or larger, skipped"
+            # Move temp to final destination
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                os.rename(temp_path, output_path)
+                size_mb = os.path.getsize(output_path) // 1_000_000
+                return True, f"Video saved ({size_mb}MB)"
             
             return False, "Download completed but no file created"
             
         except Exception as e:
             # Clean up temp file on error
-            temp_path = output_path + '.tmp'
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             return False, f"Download error: {str(e)}"
