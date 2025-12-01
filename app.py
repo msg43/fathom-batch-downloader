@@ -154,7 +154,12 @@ def start_download():
     progress_queues[session_id] = queue.Queue()
     
     # Create a lookup dict for meeting info
-    meetings_lookup = {m.get('id') or m.get('recording_id'): m for m in meetings_info}
+    # Note: meeting IDs may come as strings or ints, so normalize to strings
+    meetings_lookup = {}
+    for m in meetings_info:
+        mid = m.get('id') or m.get('recording_id')
+        if mid is not None:
+            meetings_lookup[str(mid)] = m
     
     # Start download in background thread
     thread = threading.Thread(
@@ -211,7 +216,7 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                 })
                 
                 # Get meeting info from lookup (passed from frontend) or fetch fresh
-                meeting_info = meetings_lookup.get(meeting_id)
+                meeting_info = meetings_lookup.get(str(meeting_id))
                 meeting, error = api.get_meeting_details(meeting_id, options, meeting_info)
                 if error:
                     q.put({'type': 'warning', 'message': f'Error fetching meeting {meeting_id}: {error}'})
