@@ -58,6 +58,18 @@
                 </div>
             </div>
 
+            <!-- Search Filter -->
+            <div class="search-filter">
+                <div class="search-input-wrapper">
+                    <input type="text" id="search-input" placeholder="Search meetings... (use AND, OR, NOT for boolean search)">
+                    <button class="btn btn-small" id="clear-search-btn" title="Clear search">✕</button>
+                </div>
+                <div class="search-help">
+                    <small>Examples: <code>standup AND team</code> | <code>review OR retro</code> | <code>meeting NOT cancelled</code></small>
+                </div>
+                <div class="filter-stats" id="filter-stats"></div>
+            </div>
+
             <div class="table-container">
                 <table class="meetings-table" id="meetings-table">
                     <thead>

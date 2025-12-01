@@ -22,6 +22,11 @@ const elements = {
     selectedCount: document.getElementById('selected-count'),
     noMeetings: document.getElementById('no-meetings'),
     
+    // Search
+    searchInput: document.getElementById('search-input'),
+    clearSearchBtn: document.getElementById('clear-search-btn'),
+    filterStats: document.getElementById('filter-stats'),
+    
     // Download
     downloadSection: document.getElementById('download-section'),
     downloadBtn: document.getElementById('download-btn'),
@@ -58,8 +63,154 @@ function setupEventListeners() {
     elements.selectNoneBtn.addEventListener('click', selectNone);
     elements.selectAllCheckbox.addEventListener('change', toggleSelectAll);
     
+    // Search
+    elements.searchInput.addEventListener('input', debounce(applySearchFilter, 300));
+    elements.clearSearchBtn.addEventListener('click', clearSearch);
+    
     // Download button
     elements.downloadBtn.addEventListener('click', startDownload);
+}
+
+// Debounce helper
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Boolean Search Parser
+function parseBooleanSearch(query) {
+    /**
+     * Parse a boolean search query
+     * Supports: AND, OR, NOT operators
+     * Examples:
+     *   "standup AND team" - must contain both
+     *   "review OR retro" - must contain either
+     *   "meeting NOT cancelled" - must contain meeting, must NOT contain cancelled
+     *   "team standup" - implicit AND (must contain both)
+     */
+    query = query.trim();
+    if (!query) return null;
+    
+    // Tokenize: split by operators while preserving them
+    const tokens = query.split(/\s+(AND|OR|NOT)\s+/i);
+    
+    if (tokens.length === 1) {
+        // Simple search - implicit AND for multiple words
+        const words = tokens[0].toLowerCase().split(/\s+/).filter(w => w.length > 0);
+        return { type: 'AND', terms: words.map(w => ({ type: 'TERM', value: w })) };
+    }
+    
+    // Parse tokens with operators
+    const ast = { type: 'AND', terms: [] };
+    let currentOp = 'AND';
+    let notNext = false;
+    
+    for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i].trim();
+        if (!token) continue;
+        
+        const upperToken = token.toUpperCase();
+        
+        if (upperToken === 'AND') {
+            currentOp = 'AND';
+        } else if (upperToken === 'OR') {
+            currentOp = 'OR';
+        } else if (upperToken === 'NOT') {
+            notNext = true;
+        } else {
+            // It's a term - may contain multiple words
+            const words = token.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+            for (const word of words) {
+                const term = { type: notNext ? 'NOT' : 'TERM', value: word, op: currentOp };
+                ast.terms.push(term);
+                notNext = false;
+            }
+        }
+    }
+    
+    return ast;
+}
+
+function matchesBooleanSearch(text, ast) {
+    if (!ast || !ast.terms || ast.terms.length === 0) return true;
+    
+    text = text.toLowerCase();
+    
+    let result = null;
+    let currentOp = 'AND';
+    
+    for (const term of ast.terms) {
+        const matches = text.includes(term.value);
+        let termResult;
+        
+        if (term.type === 'NOT') {
+            termResult = !matches;
+        } else {
+            termResult = matches;
+        }
+        
+        // Apply operator
+        const op = term.op || currentOp;
+        if (result === null) {
+            result = termResult;
+        } else if (op === 'AND') {
+            result = result && termResult;
+        } else if (op === 'OR') {
+            result = result || termResult;
+        }
+        
+        currentOp = term.op || 'AND';
+    }
+    
+    return result !== null ? result : true;
+}
+
+function applySearchFilter() {
+    const query = elements.searchInput.value;
+    const ast = parseBooleanSearch(query);
+    
+    const rows = elements.meetingsTbody.querySelectorAll('tr');
+    let visibleCount = 0;
+    let totalCount = rows.length;
+    
+    rows.forEach(row => {
+        const titleCell = row.querySelector('.meeting-title');
+        if (!titleCell) return;
+        
+        const title = titleCell.textContent;
+        const matches = matchesBooleanSearch(title, ast);
+        
+        if (matches) {
+            row.classList.remove('filtered-out');
+            visibleCount++;
+        } else {
+            row.classList.add('filtered-out');
+        }
+    });
+    
+    // Update filter stats
+    if (query.trim()) {
+        elements.filterStats.textContent = `Showing ${visibleCount} of ${totalCount} meetings`;
+        elements.filterStats.classList.add('has-filter');
+    } else {
+        elements.filterStats.textContent = '';
+        elements.filterStats.classList.remove('has-filter');
+    }
+    
+    updateSelectedCount();
+}
+
+function clearSearch() {
+    elements.searchInput.value = '';
+    applySearchFilter();
+    elements.searchInput.focus();
 }
 
 // Config Functions
@@ -276,21 +427,43 @@ function escapeHtml(text) {
 }
 
 function selectAll() {
+    // Only select visible (not filtered out) meetings
     document.querySelectorAll('.meeting-checkbox').forEach(cb => {
-        cb.checked = true;
+        const row = cb.closest('tr');
+        if (!row.classList.contains('filtered-out')) {
+            cb.checked = true;
+            const id = cb.dataset.id;
+            selectedMeetingIds.add(id);
+        }
     });
-    meetings.forEach(m => selectedMeetingIds.add(m.id));
-    elements.selectAllCheckbox.checked = true;
+    updateSelectAllCheckboxState();
     updateSelectedCount();
 }
 
 function selectNone() {
+    // Only deselect visible (not filtered out) meetings
     document.querySelectorAll('.meeting-checkbox').forEach(cb => {
-        cb.checked = false;
+        const row = cb.closest('tr');
+        if (!row.classList.contains('filtered-out')) {
+            cb.checked = false;
+            const id = cb.dataset.id;
+            selectedMeetingIds.delete(id);
+        }
     });
-    selectedMeetingIds.clear();
-    elements.selectAllCheckbox.checked = false;
+    updateSelectAllCheckboxState();
     updateSelectedCount();
+}
+
+function updateSelectAllCheckboxState() {
+    const visibleCheckboxes = Array.from(document.querySelectorAll('.meeting-checkbox')).filter(cb => {
+        const row = cb.closest('tr');
+        return !row.classList.contains('filtered-out');
+    });
+    const allChecked = visibleCheckboxes.length > 0 && visibleCheckboxes.every(cb => cb.checked);
+    const someChecked = visibleCheckboxes.some(cb => cb.checked);
+    
+    elements.selectAllCheckbox.checked = allChecked;
+    elements.selectAllCheckbox.indeterminate = someChecked && !allChecked;
 }
 
 function toggleSelectAll() {

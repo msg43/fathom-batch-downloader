@@ -7,8 +7,9 @@ Supports Google OAuth by using a persistent browser session
 import os
 import re
 import json
+import subprocess
 import requests
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from playwright.sync_api import sync_playwright, Browser, Page
 
 
@@ -156,10 +157,15 @@ class VideoExtractor:
                 url = response.url
                 content_type = response.headers.get('content-type', '')
                 
-                # Look for video files or HLS manifests
-                if any(ext in url.lower() for ext in ['.mp4', '.webm', '.m3u8', '/video/']):
+                # Skip blob URLs - they can't be downloaded directly
+                if url.startswith('blob:'):
+                    return
+                
+                # Look for video files, HLS manifests, or cloud storage URLs
+                video_indicators = ['.mp4', '.webm', '.m3u8', '/video/', 'cloudfront', 'amazonaws', 'storage.googleapis']
+                if any(ind in url.lower() for ind in video_indicators):
                     video_urls.append(url)
-                elif 'video' in content_type:
+                elif 'video' in content_type.lower():
                     video_urls.append(url)
             
             page.on('response', handle_response)
@@ -172,39 +178,85 @@ class VideoExtractor:
             # Navigate to the video page
             page.goto(fathom_url, wait_until='networkidle', timeout=30000)
             
-            # Wait a bit for video to start loading
-            page.wait_for_timeout(3000)
+            # Wait for page to fully load
+            page.wait_for_timeout(2000)
             
-            # Try to find video element in the DOM
-            video_src = None
+            # Try to trigger video playback to capture the actual URL
             try:
-                video_element = page.query_selector('video source, video')
-                if video_element:
-                    video_src = video_element.get_attribute('src')
-                    if video_src:
-                        video_urls.append(video_src)
+                # Look for play button and click it
+                play_selectors = [
+                    'button[aria-label*="play" i]',
+                    '.play-button',
+                    '[class*="play"]',
+                    'video',  # Clicking video often starts playback
+                    '[data-testid*="play"]'
+                ]
+                for selector in play_selectors:
+                    try:
+                        element = page.query_selector(selector)
+                        if element:
+                            element.click()
+                            page.wait_for_timeout(3000)
+                            break
+                    except:
+                        continue
             except:
                 pass
             
-            # Try to trigger video playback to capture the URL
+            # Wait more for video to load after click
+            page.wait_for_timeout(2000)
+            
+            # Try to find video source in page source
             try:
-                play_button = page.query_selector('button[aria-label*="play" i], .play-button, [class*="play"]')
-                if play_button:
-                    play_button.click()
-                    page.wait_for_timeout(2000)
+                # Look for video URLs in page content
+                page_content = page.content()
+                
+                # Common patterns for video URLs in Fathom/React apps
+                import re
+                url_patterns = [
+                    r'https://[^"\s]+\.mp4[^"\s]*',
+                    r'https://[^"\s]+cloudfront[^"\s]+',
+                    r'https://[^"\s]+amazonaws\.com[^"\s]+video[^"\s]*',
+                    r'"videoUrl"\s*:\s*"([^"]+)"',
+                    r'"video_url"\s*:\s*"([^"]+)"',
+                    r'"src"\s*:\s*"(https://[^"]+\.mp4[^"]*)"',
+                ]
+                
+                for pattern in url_patterns:
+                    matches = re.findall(pattern, page_content)
+                    for match in matches:
+                        url = match if isinstance(match, str) else match
+                        if url.startswith('http') and 'blob:' not in url:
+                            video_urls.append(url)
             except:
                 pass
             
             # Filter and prioritize video URLs
-            mp4_urls = [u for u in video_urls if '.mp4' in u.lower()]
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_urls = []
+            for u in video_urls:
+                if u not in seen and not u.startswith('blob:'):
+                    seen.add(u)
+                    unique_urls.append(u)
             
-            if mp4_urls:
-                # Prefer the highest quality (usually the longest URL or specific patterns)
-                return mp4_urls[-1], None
-            elif video_urls:
-                return video_urls[-1], None
+            # Prefer m3u8 (HLS) for streaming, then MP4
+            m3u8_urls = [u for u in unique_urls if '.m3u8' in u.lower() and 'index.m3u8' in u.lower()]
+            mp4_urls = [u for u in unique_urls if '.mp4' in u.lower()]
+            
+            if m3u8_urls:
+                # Return the HLS manifest URL
+                return m3u8_urls[0], None
+            elif mp4_urls:
+                return mp4_urls[0], None
+            elif unique_urls:
+                # Look for any m3u8
+                any_m3u8 = [u for u in unique_urls if '.m3u8' in u.lower()]
+                if any_m3u8:
+                    return any_m3u8[0], None
+                return unique_urls[0], None
             else:
-                return None, "Could not find video URL on page"
+                return None, "Could not find video URL on page. The video may use protected streaming."
                 
         except Exception as e:
             return None, str(e)
@@ -229,10 +281,101 @@ class VideoExtractor:
         if not video_url:
             return False, "No video URL found"
         
+        output_path = os.path.join(output_folder, filename)
+        
+        # Check if it's an HLS stream
+        if '.m3u8' in video_url.lower():
+            return self._download_hls(video_url, output_path)
+        else:
+            return self._download_direct(video_url, output_path)
+    
+    def _find_ffmpeg(self) -> Optional[str]:
+        """Find ffmpeg binary"""
+        import shutil
+        
+        # Check if in PATH
+        ffmpeg_path = shutil.which('ffmpeg')
+        if ffmpeg_path:
+            return ffmpeg_path
+        
+        # Check common locations
+        common_paths = [
+            '/opt/homebrew/bin/ffmpeg',  # macOS ARM
+            '/usr/local/bin/ffmpeg',      # macOS Intel
+            '/usr/bin/ffmpeg',            # Linux
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+        
+        return None
+    
+    def _download_hls(self, m3u8_url: str, output_path: str) -> Tuple[bool, str]:
+        """Download HLS stream using ffmpeg"""
         try:
-            # Download the video
-            output_path = os.path.join(output_folder, filename)
+            # Find ffmpeg
+            ffmpeg = self._find_ffmpeg()
+            if not ffmpeg:
+                return False, "ffmpeg not found. Please install ffmpeg to download videos (brew install ffmpeg)."
             
+            # Build cookie string for ffmpeg
+            cookie_str = ""
+            if self.context:
+                cookies = self.context.cookies()
+                cookie_parts = [f"{c['name']}={c['value']}" for c in cookies if 'fathom' in c.get('domain', '')]
+                cookie_str = "; ".join(cookie_parts)
+            
+            # Build ffmpeg command
+            cmd = [
+                ffmpeg,
+                '-y',  # Overwrite output
+                '-headers', f'Cookie: {cookie_str}\r\nReferer: https://fathom.video/\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36\r\n',
+                '-i', m3u8_url,
+                '-c', 'copy',  # Copy streams without re-encoding
+                '-bsf:a', 'aac_adtstoasc',  # Fix audio for MP4 container
+                output_path
+            ]
+            
+            # Run ffmpeg
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+            
+            if result.returncode != 0:
+                # Try without the bsf filter
+                cmd_simple = [
+                    ffmpeg,
+                    '-y',
+                    '-headers', f'Cookie: {cookie_str}\r\nReferer: https://fathom.video/\r\n',
+                    '-i', m3u8_url,
+                    '-c', 'copy',
+                    output_path
+                ]
+                result = subprocess.run(cmd_simple, capture_output=True, text=True, timeout=600)
+                
+                if result.returncode != 0:
+                    return False, f"ffmpeg failed: {result.stderr[:200]}"
+            
+            # Verify file was created
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                return True, f"Video saved to {output_path}"
+            else:
+                return False, "ffmpeg completed but no output file created"
+                
+        except FileNotFoundError:
+            return False, "ffmpeg not found. Please install ffmpeg to download videos."
+        except subprocess.TimeoutExpired:
+            return False, "Video download timed out (exceeded 10 minutes)"
+        except Exception as e:
+            return False, f"HLS download error: {str(e)}"
+    
+    def _download_direct(self, video_url: str, output_path: str) -> Tuple[bool, str]:
+        """Download video directly via HTTP"""
+        try:
             # Use cookies from browser session for authenticated download
             cookies = {}
             if self.context:
@@ -252,16 +395,11 @@ class VideoExtractor:
             if response.status_code != 200:
                 return False, f"Download failed with status {response.status_code}"
             
-            # Get file size for progress (if available)
-            total_size = int(response.headers.get('content-length', 0))
-            
             # Write file
             with open(output_path, 'wb') as f:
-                downloaded = 0
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-                        downloaded += len(chunk)
             
             return True, f"Video saved to {output_path}"
             
