@@ -46,6 +46,7 @@ class DownloadOrganizer:
         """
         Create a folder for a meeting with format: YYYY-MM-DD_Meeting_Title
         Returns the folder path
+        If folder exists, it will be reused (files will be overwritten)
         """
         date = self._format_date(meeting.get('created_at') or meeting.get('recording_start_time'))
         title = meeting.get('title') or meeting.get('meeting_title') or 'Untitled_Meeting'
@@ -53,13 +54,7 @@ class DownloadOrganizer:
         folder_name = f"{date}_{self._sanitize_filename(title)}"
         folder_path = os.path.join(self.base_dir, folder_name)
         
-        # Handle duplicate folder names
-        if os.path.exists(folder_path):
-            counter = 1
-            while os.path.exists(f"{folder_path}_{counter}"):
-                counter += 1
-            folder_path = f"{folder_path}_{counter}"
-        
+        # Create folder (or reuse existing - files will be overwritten)
         os.makedirs(folder_path, exist_ok=True)
         return folder_path
     
