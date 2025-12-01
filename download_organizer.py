@@ -159,11 +159,42 @@ class DownloadOrganizer:
         return json_path, txt_path
     
     def save_summary(self, folder_path: str, summary: Dict[str, Any]) -> str:
-        """Save summary as markdown file. Only overwrites if new file is larger."""
+        """Save summary as markdown file. Skips if file already exists."""
         filepath = os.path.join(folder_path, 'summary.md')
         
-        template_name = summary.get('template_name', 'general')
-        content = summary.get('markdown_formatted', '')
+        # Also save raw JSON for debugging
+        json_path = os.path.join(folder_path, 'summary.json')
+        self._safe_write_json(json_path, summary)
+        
+        # Try various field names the API might use
+        template_name = summary.get('template_name') or summary.get('template') or 'general'
+        content = (
+            summary.get('markdown_formatted') or 
+            summary.get('markdown') or 
+            summary.get('content') or 
+            summary.get('text') or 
+            summary.get('summary') or
+            ''
+        )
+        
+        # If still empty, try to extract from nested structure
+        if not content and isinstance(summary, dict):
+            # Check for default_summary or similar nested structures
+            for key in ['default_summary', 'summaries', 'data']:
+                if key in summary and isinstance(summary[key], dict):
+                    content = (
+                        summary[key].get('markdown_formatted') or
+                        summary[key].get('markdown') or
+                        summary[key].get('content') or
+                        summary[key].get('text') or
+                        ''
+                    )
+                    if content:
+                        break
+        
+        # If still empty, just dump the whole thing as JSON in markdown
+        if not content:
+            content = f"```json\n{json.dumps(summary, indent=2)}\n```"
         
         full_content = f"# Meeting Summary\n\n*Template: {template_name}*\n\n{content}"
         self._safe_write(filepath, full_content)

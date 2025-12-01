@@ -347,22 +347,63 @@ class VideoExtractor:
         return None
     
     def _is_video_complete(self, existing_path: str, source_url: str) -> Tuple[bool, str]:
-        """Check if existing video is complete by comparing durations"""
+        """Check if existing video is complete by verifying it's fully readable"""
+        # First, verify the file is actually readable to the end (not just header)
+        if not self._verify_video_readable(existing_path):
+            return False, "File is corrupted or truncated"
+        
         existing_duration = self._get_duration(existing_path)
         if existing_duration is None:
             return False, "Could not read existing file duration"
         
         source_duration = self._get_duration(source_url, is_url=True)
         if source_duration is None:
-            # Can't verify, assume incomplete to be safe
+            # Can't verify source, but file is readable - assume complete if > 1 min
+            if existing_duration > 60:
+                return True, f"Source unavailable, but file is valid ({existing_duration:.0f}s)"
             return False, "Could not read source duration"
         
         # Consider complete if within 5 seconds or 98% of source duration
         duration_diff = abs(source_duration - existing_duration)
         if duration_diff <= 5 or existing_duration >= (source_duration * 0.98):
-            return True, f"Existing: {existing_duration:.0f}s, Source: {source_duration:.0f}s"
+            return True, f"Complete: {existing_duration:.0f}s / {source_duration:.0f}s"
         
         return False, f"Incomplete: {existing_duration:.0f}s vs {source_duration:.0f}s expected"
+    
+    def _verify_video_readable(self, video_path: str) -> bool:
+        """Verify video file is fully readable (not truncated)"""
+        try:
+            ffprobe = self._find_ffprobe()
+            if not ffprobe:
+                return True  # Can't verify, assume OK
+            
+            # Use ffprobe to try reading the entire file
+            # -count_frames forces reading through the whole file
+            cmd = [
+                ffprobe, '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=nb_read_frames',
+                '-count_frames',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                video_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            
+            # If ffprobe can count frames without error, file is readable
+            if result.returncode == 0:
+                return True
+            
+            # Check for truncation errors
+            if 'Invalid data' in result.stderr or 'moov atom not found' in result.stderr:
+                return False
+                
+            return True  # Other errors, assume OK
+            
+        except subprocess.TimeoutExpired:
+            return False  # Timeout likely means file is very corrupted
+        except:
+            return True  # Can't verify, assume OK
     
     def _find_ffmpeg(self) -> Optional[str]:
         """Find ffmpeg binary"""
