@@ -272,15 +272,9 @@ class VideoExtractor:
         """
         Download video from a Fathom page to the specified folder
         Returns (success, message)
-        Skips download if file already exists with content.
+        Skips download if existing file is complete (same duration as source).
         """
         output_path = os.path.join(output_folder, filename)
-        
-        # Skip if file already exists and has content (> 1MB = likely complete)
-        if os.path.exists(output_path):
-            existing_size = os.path.getsize(output_path)
-            if existing_size > 1_000_000:  # 1MB threshold
-                return True, f"Video already exists ({existing_size // 1_000_000}MB), skipped"
         
         video_url, error = self.extract_video_url(fathom_url)
         
@@ -290,11 +284,85 @@ class VideoExtractor:
         if not video_url:
             return False, "No video URL found"
         
+        # Check if file already exists and is complete
+        if os.path.exists(output_path):
+            existing_size = os.path.getsize(output_path)
+            if existing_size > 1_000_000:  # Only check if > 1MB
+                # Compare durations to verify completeness
+                is_complete, msg = self._is_video_complete(output_path, video_url)
+                if is_complete:
+                    return True, f"Video already complete ({existing_size // 1_000_000}MB), skipped"
+        
         # Check if it's an HLS stream
         if '.m3u8' in video_url.lower():
             return self._download_hls(video_url, output_path)
         else:
             return self._download_direct(video_url, output_path)
+    
+    def _get_duration(self, path_or_url: str, is_url: bool = False) -> Optional[float]:
+        """Get video duration in seconds using ffprobe"""
+        try:
+            ffprobe = self._find_ffprobe()
+            if not ffprobe:
+                return None
+            
+            cmd = [ffprobe, '-v', 'error', '-show_entries', 'format=duration', 
+                   '-of', 'default=noprint_wrappers=1:nokey=1']
+            
+            if is_url:
+                # Add headers for URL access
+                cookie_str = ""
+                if self.context:
+                    cookies = self.context.cookies()
+                    cookie_parts = [f"{c['name']}={c['value']}" for c in cookies if 'fathom' in c.get('domain', '')]
+                    cookie_str = "; ".join(cookie_parts)
+                cmd.extend(['-headers', f'Cookie: {cookie_str}\r\n'])
+            
+            cmd.append(path_or_url)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+        except:
+            pass
+        return None
+    
+    def _find_ffprobe(self) -> Optional[str]:
+        """Find ffprobe binary"""
+        import shutil
+        
+        ffprobe_path = shutil.which('ffprobe')
+        if ffprobe_path:
+            return ffprobe_path
+        
+        common_paths = [
+            '/opt/homebrew/bin/ffprobe',
+            '/usr/local/bin/ffprobe',
+            '/usr/bin/ffprobe',
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+        return None
+    
+    def _is_video_complete(self, existing_path: str, source_url: str) -> Tuple[bool, str]:
+        """Check if existing video is complete by comparing durations"""
+        existing_duration = self._get_duration(existing_path)
+        if existing_duration is None:
+            return False, "Could not read existing file duration"
+        
+        source_duration = self._get_duration(source_url, is_url=True)
+        if source_duration is None:
+            # Can't verify, assume incomplete to be safe
+            return False, "Could not read source duration"
+        
+        # Consider complete if within 5 seconds or 98% of source duration
+        duration_diff = abs(source_duration - existing_duration)
+        if duration_diff <= 5 or existing_duration >= (source_duration * 0.98):
+            return True, f"Existing: {existing_duration:.0f}s, Source: {source_duration:.0f}s"
+        
+        return False, f"Incomplete: {existing_duration:.0f}s vs {source_duration:.0f}s expected"
     
     def _find_ffmpeg(self) -> Optional[str]:
         """Find ffmpeg binary"""
