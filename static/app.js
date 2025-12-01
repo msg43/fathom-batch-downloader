@@ -6,6 +6,8 @@
 const elements = {
     // Config
     apiKeyInput: document.getElementById('api-key'),
+    downloadDirInput: document.getElementById('download-dir'),
+    browseDirBtn: document.getElementById('browse-dir-btn'),
     saveConfigBtn: document.getElementById('save-config-btn'),
     loadMeetingsBtn: document.getElementById('load-meetings-btn'),
     configStatus: document.getElementById('config-status'),
@@ -57,6 +59,7 @@ function setupEventListeners() {
     elements.saveConfigBtn.addEventListener('click', saveConfig);
     elements.loadMeetingsBtn.addEventListener('click', loadMeetings);
     elements.googleAuthBtn.addEventListener('click', authenticateWithGoogle);
+    elements.browseDirBtn.addEventListener('click', resetDownloadDir);
     
     // Selection buttons
     elements.selectAllBtn.addEventListener('click', selectAll);
@@ -224,11 +227,20 @@ async function loadConfig() {
             elements.loadMeetingsBtn.disabled = false;
         }
         
+        if (config.download_dir) {
+            elements.downloadDirInput.value = config.download_dir;
+        }
+        
         // Update Google auth status
         updateGoogleAuthStatus(config.google_authenticated);
     } catch (error) {
         console.error('Failed to load config:', error);
     }
+}
+
+function resetDownloadDir() {
+    elements.downloadDirInput.value = '';
+    elements.downloadDirInput.placeholder = './downloads (default)';
 }
 
 function updateGoogleAuthStatus(isAuthenticated) {
@@ -287,7 +299,8 @@ async function authenticateWithGoogle() {
 
 async function saveConfig() {
     const config = {
-        api_key: elements.apiKeyInput.value.trim()
+        api_key: elements.apiKeyInput.value.trim(),
+        download_dir: elements.downloadDirInput.value.trim()
     };
     
     if (!config.api_key) {

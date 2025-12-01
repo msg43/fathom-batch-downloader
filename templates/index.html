@@ -23,6 +23,15 @@
                 <small>Get your API key from <a href="https://fathom.video/settings" target="_blank">Fathom Settings</a></small>
             </div>
 
+            <div class="form-group">
+                <label for="download-dir">Download Directory</label>
+                <div class="input-with-button">
+                    <input type="text" id="download-dir" placeholder="~/Downloads/fathom">
+                    <button class="btn btn-small" id="browse-dir-btn" type="button" title="Default location">Reset</button>
+                </div>
+                <small>Where to save downloaded files. Leave empty for default (<code>./downloads</code>)</small>
+            </div>
+
             <div class="button-group">
                 <button class="btn btn-primary" id="save-config-btn">Save Configuration</button>
                 <button class="btn btn-secondary" id="load-meetings-btn" disabled>Load Meetings</button>

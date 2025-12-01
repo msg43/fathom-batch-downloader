@@ -24,7 +24,23 @@ progress_queues = {}
 
 # Config file path
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config.json')
-DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
+DEFAULT_DOWNLOADS_DIR = os.path.join(os.path.dirname(__file__), 'downloads')
+
+
+def get_downloads_dir():
+    """Get the configured downloads directory, or default if not set"""
+    cfg = load_config()
+    download_dir = cfg.get('download_dir', '').strip()
+    
+    if download_dir:
+        # Expand ~ to home directory
+        download_dir = os.path.expanduser(download_dir)
+        # Make absolute if relative
+        if not os.path.isabs(download_dir):
+            download_dir = os.path.abspath(download_dir)
+        return download_dir
+    
+    return DEFAULT_DOWNLOADS_DIR
 
 
 def load_config():
@@ -67,6 +83,8 @@ def config():
         # Update config
         if 'api_key' in data:
             cfg['api_key'] = data['api_key']
+        if 'download_dir' in data:
+            cfg['download_dir'] = data['download_dir']
         if 'fathom_email' in data:
             cfg['fathom_email'] = data['fathom_email']
         if 'fathom_password' in data and data['fathom_password'] != '••••••••':
@@ -152,8 +170,11 @@ def download_worker(session_id, meeting_ids, options, cfg):
         return
     
     try:
+        downloads_dir = get_downloads_dir()
+        os.makedirs(downloads_dir, exist_ok=True)
+        
         api = FathomAPI(cfg['api_key'])
-        organizer = DownloadOrganizer(DOWNLOADS_DIR)
+        organizer = DownloadOrganizer(downloads_dir)
         video_extractor = None
         
         # Initialize video extractor if needed
@@ -237,7 +258,7 @@ def download_worker(session_id, meeting_ids, options, cfg):
         q.put({
             'type': 'complete',
             'message': f'Download complete! {total} meetings processed.',
-            'folder': DOWNLOADS_DIR
+            'folder': downloads_dir
         })
         
     except Exception as e:
@@ -274,8 +295,8 @@ def progress(session_id):
 
 
 if __name__ == '__main__':
-    # Ensure downloads directory exists
-    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    # Ensure default downloads directory exists
+    os.makedirs(DEFAULT_DOWNLOADS_DIR, exist_ok=True)
     
     print("\n" + "="*50)
     print("Fathom Batch Downloader")
