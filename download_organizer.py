@@ -17,6 +17,30 @@ class DownloadOrganizer:
         self.base_dir = base_dir
         os.makedirs(base_dir, exist_ok=True)
     
+    def _safe_write(self, filepath: str, content: str, encoding: str = 'utf-8') -> bool:
+        """
+        Write content to file only if new content is larger than existing.
+        Returns True if file was written, False if skipped.
+        """
+        new_size = len(content.encode(encoding))
+        
+        if os.path.exists(filepath):
+            existing_size = os.path.getsize(filepath)
+            if new_size <= existing_size:
+                return False  # Skip - existing file is same size or larger
+        
+        with open(filepath, 'w', encoding=encoding) as f:
+            f.write(content)
+        return True
+    
+    def _safe_write_json(self, filepath: str, data: Any) -> bool:
+        """
+        Write JSON data to file only if new content is larger than existing.
+        Returns True if file was written, False if skipped.
+        """
+        content = json.dumps(data, indent=2, ensure_ascii=False)
+        return self._safe_write(filepath, content)
+    
     def _sanitize_filename(self, name: str) -> str:
         """Convert a string to a safe filename"""
         # Remove or replace problematic characters
@@ -59,7 +83,7 @@ class DownloadOrganizer:
         return folder_path
     
     def save_metadata(self, folder_path: str, meeting: Dict[str, Any]) -> str:
-        """Save meeting metadata as JSON"""
+        """Save meeting metadata as JSON (always overwrites - metadata is small)"""
         metadata = {
             'id': meeting.get('recording_id'),
             'title': meeting.get('title'),
@@ -76,8 +100,7 @@ class DownloadOrganizer:
         }
         
         filepath = os.path.join(folder_path, 'metadata.json')
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        self._safe_write_json(filepath, metadata)
         
         return filepath
     
@@ -86,31 +109,31 @@ class DownloadOrganizer:
         Save transcript in both JSON and human-readable text formats
         Returns (json_path, txt_path)
         Handles various transcript formats from Fathom API
+        Only overwrites if new file is larger than existing.
         """
         # Save JSON version
         json_path = os.path.join(folder_path, 'transcript.json')
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(transcript, f, indent=2, ensure_ascii=False)
+        self._safe_write_json(json_path, transcript)
         
-        # Save human-readable text version
+        # Build human-readable text version
         txt_path = os.path.join(folder_path, 'transcript.txt')
-        with open(txt_path, 'w', encoding='utf-8') as f:
-            # Handle different transcript formats
-            entries = transcript
-            
-            # If transcript is a dict with 'entries' or 'segments' key
-            if isinstance(transcript, dict):
-                entries = transcript.get('entries') or transcript.get('segments') or transcript.get('transcript') or []
-            
-            # If entries is still not a list, try to handle it
-            if not isinstance(entries, list):
-                f.write(str(entries))
-                return json_path, txt_path
-            
+        lines = []
+        
+        # Handle different transcript formats
+        entries = transcript
+        
+        # If transcript is a dict with 'entries' or 'segments' key
+        if isinstance(transcript, dict):
+            entries = transcript.get('entries') or transcript.get('segments') or transcript.get('transcript') or []
+        
+        # If entries is still not a list, try to handle it
+        if not isinstance(entries, list):
+            lines.append(str(entries))
+        else:
             for entry in entries:
                 # Skip non-dict entries
                 if isinstance(entry, str):
-                    f.write(f"{entry}\n\n")
+                    lines.append(f"{entry}\n")
                     continue
                     
                 if not isinstance(entry, dict):
@@ -131,22 +154,22 @@ class DownloadOrganizer:
                 # Try different field names for text
                 text = entry.get('text') or entry.get('content') or entry.get('transcript', '')
                 
-                f.write(f"[{timestamp}] {speaker_name}:\n")
-                f.write(f"{text}\n\n")
+                lines.append(f"[{timestamp}] {speaker_name}:\n{text}\n")
+        
+        # Only write if new content is larger
+        self._safe_write(txt_path, '\n'.join(lines))
         
         return json_path, txt_path
     
     def save_summary(self, folder_path: str, summary: Dict[str, Any]) -> str:
-        """Save summary as markdown file"""
+        """Save summary as markdown file. Only overwrites if new file is larger."""
         filepath = os.path.join(folder_path, 'summary.md')
         
         template_name = summary.get('template_name', 'general')
         content = summary.get('markdown_formatted', '')
         
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(f"# Meeting Summary\n\n")
-            f.write(f"*Template: {template_name}*\n\n")
-            f.write(content)
+        full_content = f"# Meeting Summary\n\n*Template: {template_name}*\n\n{content}"
+        self._safe_write(filepath, full_content)
         
         return filepath
     
@@ -154,35 +177,38 @@ class DownloadOrganizer:
         """
         Save action items in both JSON and markdown formats
         Returns (json_path, md_path)
+        Only overwrites if new file is larger than existing.
         """
         # Save JSON version
         json_path = os.path.join(folder_path, 'action_items.json')
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(action_items, f, indent=2, ensure_ascii=False)
+        self._safe_write_json(json_path, action_items)
         
-        # Save markdown version
+        # Build markdown version
         md_path = os.path.join(folder_path, 'action_items.md')
-        with open(md_path, 'w', encoding='utf-8') as f:
-            f.write("# Action Items\n\n")
+        lines = ["# Action Items\n"]
+        
+        items_list = action_items if isinstance(action_items, list) else []
+        for i, item in enumerate(items_list, 1):
+            if not isinstance(item, dict):
+                continue
+            description = item.get('description', 'No description')
+            completed = item.get('completed', False)
+            assignee = item.get('assignee', {})
+            assignee_name = assignee.get('name', 'Unassigned') if isinstance(assignee, dict) else str(assignee)
+            timestamp = item.get('recording_timestamp', '')
+            playback_url = item.get('recording_playback_url', '')
             
-            for i, item in enumerate(action_items, 1):
-                description = item.get('description', 'No description')
-                completed = item.get('completed', False)
-                assignee = item.get('assignee', {})
-                assignee_name = assignee.get('name', 'Unassigned')
-                timestamp = item.get('recording_timestamp', '')
-                playback_url = item.get('recording_playback_url', '')
-                
-                checkbox = '☑' if completed else '☐'
-                
-                f.write(f"## {i}. {checkbox} {description}\n\n")
-                f.write(f"- **Assignee:** {assignee_name}\n")
-                if timestamp:
-                    f.write(f"- **Timestamp:** {timestamp}\n")
-                if playback_url:
-                    f.write(f"- **Link:** [{playback_url}]({playback_url})\n")
-                f.write(f"- **Status:** {'Completed' if completed else 'Pending'}\n")
-                f.write("\n")
+            checkbox = '☑' if completed else '☐'
+            
+            lines.append(f"## {i}. {checkbox} {description}\n")
+            lines.append(f"- **Assignee:** {assignee_name}")
+            if timestamp:
+                lines.append(f"- **Timestamp:** {timestamp}")
+            if playback_url:
+                lines.append(f"- **Link:** [{playback_url}]({playback_url})")
+            lines.append(f"- **Status:** {'Completed' if completed else 'Pending'}\n")
+        
+        self._safe_write(md_path, '\n'.join(lines))
         
         return json_path, md_path
 

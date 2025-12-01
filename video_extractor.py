@@ -312,12 +312,20 @@ class VideoExtractor:
         return None
     
     def _download_hls(self, m3u8_url: str, output_path: str) -> Tuple[bool, str]:
-        """Download HLS stream using ffmpeg"""
+        """Download HLS stream using ffmpeg. Only overwrites if new file is larger."""
         try:
+            # Check if existing file exists
+            existing_size = 0
+            if os.path.exists(output_path):
+                existing_size = os.path.getsize(output_path)
+            
             # Find ffmpeg
             ffmpeg = self._find_ffmpeg()
             if not ffmpeg:
                 return False, "ffmpeg not found. Please install ffmpeg to download videos (brew install ffmpeg)."
+            
+            # Download to temp file first to compare sizes
+            temp_path = output_path + '.tmp'
             
             # Build cookie string for ffmpeg
             cookie_str = ""
@@ -326,7 +334,7 @@ class VideoExtractor:
                 cookie_parts = [f"{c['name']}={c['value']}" for c in cookies if 'fathom' in c.get('domain', '')]
                 cookie_str = "; ".join(cookie_parts)
             
-            # Build ffmpeg command
+            # Build ffmpeg command (download to temp file)
             cmd = [
                 ffmpeg,
                 '-y',  # Overwrite output
@@ -334,7 +342,7 @@ class VideoExtractor:
                 '-i', m3u8_url,
                 '-c', 'copy',  # Copy streams without re-encoding
                 '-bsf:a', 'aac_adtstoasc',  # Fix audio for MP4 container
-                output_path
+                temp_path
             ]
             
             # Run ffmpeg
@@ -353,16 +361,31 @@ class VideoExtractor:
                     '-headers', f'Cookie: {cookie_str}\r\nReferer: https://fathom.video/\r\n',
                     '-i', m3u8_url,
                     '-c', 'copy',
-                    output_path
+                    temp_path
                 ]
                 result = subprocess.run(cmd_simple, capture_output=True, text=True, timeout=600)
                 
                 if result.returncode != 0:
+                    # Clean up temp file
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
                     return False, f"ffmpeg failed: {result.stderr[:200]}"
             
-            # Verify file was created
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                return True, f"Video saved to {output_path}"
+            # Verify temp file was created and check size
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                new_size = os.path.getsize(temp_path)
+                
+                # Only replace if new file is larger than existing
+                if new_size > existing_size:
+                    # Replace existing file with new one
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                    os.rename(temp_path, output_path)
+                    return True, f"Video saved to {output_path}"
+                else:
+                    # Keep existing file, remove temp
+                    os.remove(temp_path)
+                    return True, f"Existing video is same size or larger, skipped"
             else:
                 return False, "ffmpeg completed but no output file created"
                 
@@ -374,8 +397,15 @@ class VideoExtractor:
             return False, f"HLS download error: {str(e)}"
     
     def _download_direct(self, video_url: str, output_path: str) -> Tuple[bool, str]:
-        """Download video directly via HTTP"""
+        """Download video directly via HTTP. Only overwrites if new file is larger."""
         try:
+            # Check existing file size
+            existing_size = 0
+            if os.path.exists(output_path):
+                existing_size = os.path.getsize(output_path)
+            
+            temp_path = output_path + '.tmp'
+            
             # Use cookies from browser session for authenticated download
             cookies = {}
             if self.context:
@@ -395,15 +425,34 @@ class VideoExtractor:
             if response.status_code != 200:
                 return False, f"Download failed with status {response.status_code}"
             
-            # Write file
-            with open(output_path, 'wb') as f:
+            # Write to temp file
+            with open(temp_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
             
-            return True, f"Video saved to {output_path}"
+            # Check if new file is larger
+            if os.path.exists(temp_path):
+                new_size = os.path.getsize(temp_path)
+                
+                if new_size > existing_size:
+                    # Replace existing with new
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                    os.rename(temp_path, output_path)
+                    return True, f"Video saved to {output_path}"
+                else:
+                    # Keep existing, remove temp
+                    os.remove(temp_path)
+                    return True, f"Existing video is same size or larger, skipped"
+            
+            return False, "Download completed but no file created"
             
         except Exception as e:
+            # Clean up temp file on error
+            temp_path = output_path + '.tmp'
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
             return False, f"Download error: {str(e)}"
     
     def close(self):
