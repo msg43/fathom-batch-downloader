@@ -402,10 +402,11 @@ function renderMeetings() {
         
         const checkbox = row.querySelector('.meeting-checkbox');
         checkbox.addEventListener('change', () => {
+            const meetingIdStr = String(meeting.id);
             if (checkbox.checked) {
-                selectedMeetingIds.add(meeting.id);
+                selectedMeetingIds.add(meetingIdStr);
             } else {
-                selectedMeetingIds.delete(meeting.id);
+                selectedMeetingIds.delete(meetingIdStr);
             }
             updateSelectedCount();
         });
@@ -531,8 +532,8 @@ async function startDownload() {
     elements.progressLog.innerHTML = '';
     
     try {
-        // Get meeting info for selected meetings
-        const selectedMeetings = meetings.filter(m => selectedMeetingIds.has(m.id));
+        // Get meeting info for selected meetings (convert ID to string for consistent comparison)
+        const selectedMeetings = meetings.filter(m => selectedMeetingIds.has(String(m.id)));
         
         const response = await fetch('/api/download', {
             method: 'POST',

@@ -18,9 +18,10 @@ venv/
 env/
 .venv/
 
-# IDE
+# IDE / agent logs
 .idea/
 .vscode/
+.specstory/
 *.swp
 *.swo
 
