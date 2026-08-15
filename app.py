@@ -9,7 +9,7 @@ import time
 import queue
 import threading
 from flask import Flask, render_template, request, jsonify, Response
-from fathom_api import FathomAPI
+from fathom_api import FathomAPI, extract_direct_video_url_from_payload
 from video_extractor import VideoExtractor
 from download_organizer import DownloadOrganizer
 
@@ -60,6 +60,18 @@ def save_config(config):
         json.dump(config, f, indent=2)
 
 
+def google_session_ready():
+    """True if Playwright has saved OAuth state or a persistent Chromium profile."""
+    base = os.path.join(os.path.dirname(__file__), '.browser_session')
+    if os.path.exists(os.path.join(base, 'state.json')):
+        return True
+    profile = os.path.join(base, 'chromium-profile')
+    try:
+        return os.path.isdir(profile) and len(os.listdir(profile)) > 0
+    except OSError:
+        return False
+
+
 @app.route('/')
 def index():
     """Render the main page"""
@@ -74,9 +86,7 @@ def config():
         # Don't send password back to client
         if 'fathom_password' in cfg:
             cfg['fathom_password'] = '••••••••' if cfg['fathom_password'] else ''
-        # Check if Google session exists
-        session_file = os.path.join(os.path.dirname(__file__), '.browser_session', 'state.json')
-        cfg['google_authenticated'] = os.path.exists(session_file)
+        cfg['google_authenticated'] = google_session_ready()
         return jsonify(cfg)
     
     elif request.method == 'POST':
@@ -193,15 +203,6 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
         organizer = DownloadOrganizer(downloads_dir)
         video_extractor = None
         
-        # Initialize video extractor if needed
-        if options.get('video'):
-            # Check if Google session exists
-            session_file = os.path.join(os.path.dirname(__file__), '.browser_session', 'state.json')
-            if not os.path.exists(session_file):
-                q.put({'type': 'error', 'message': 'Google authentication required for video download. Click "Sign in with Google" first.'})
-                return
-            video_extractor = VideoExtractor()
-        
         total = len(meeting_ids)
         
         # Warn user if downloading many videos
@@ -270,27 +271,80 @@ def download_worker(session_id, meeting_ids, options, cfg, meetings_lookup=None)
                     update_progress(3, f'[{i+1}/{total}] Saving action items...')
                     organizer.save_action_items(folder_path, action_items)
                 
-                # Download video
-                if options.get('video') and video_extractor:
-                    video_url = meeting.get('url')
-                    if video_url:
-                        # Create progress callback for video download
-                        last_reported = [0]
-                        def video_progress(bytes_downloaded):
-                            mb = bytes_downloaded // 1_000_000
-                            # Only report every 5MB to avoid flooding
-                            if mb >= last_reported[0] + 5:
-                                last_reported[0] = mb
-                                q.put({'type': 'status', 'message': f'Downloading video: {mb}MB...'})
-                        
-                        q.put({'type': 'status', 'message': f'[{i+1}/{total}] Starting video download...'})
-                        success, msg = video_extractor.download_video(video_url, folder_path, progress_callback=video_progress)
+                # Download video: prefer API direct stream URL (no Google); else Playwright + Google session
+                if options.get('video'):
+                    last_reported = [0]
+                    def video_progress(bytes_downloaded):
+                        mb = bytes_downloaded // 1_000_000
+                        if mb >= last_reported[0] + 5:
+                            last_reported[0] = mb
+                            q.put({'type': 'status', 'message': f'Downloading video: {mb}MB...'})
+                    
+                    rec_data, _ = api.get_recording(int(meeting_id))
+                    direct = extract_direct_video_url_from_payload(meeting or {})
+                    if not direct and rec_data:
+                        direct = extract_direct_video_url_from_payload(rec_data)
+                    if not direct:
+                        direct = extract_direct_video_url_from_payload(meeting_info or {})
+                    
+                    if direct:
+                        if video_extractor is None:
+                            video_extractor = VideoExtractor()
+                        q.put({'type': 'status', 'message': f'[{i+1}/{total}] Downloading video (API stream)...'})
+                        success, msg = video_extractor.download_video_stream_url(
+                            direct,
+                            folder_path,
+                            api_key=cfg.get('api_key'),
+                            progress_callback=video_progress,
+                        )
                         if not success:
                             q.put({'type': 'warning', 'message': f'Video download failed: {msg}'})
                         else:
                             q.put({'type': 'status', 'message': msg})
-                        # Extra delay after video downloads to avoid overloading servers
                         time.sleep(VIDEO_DOWNLOAD_DELAY)
+                    else:
+                        # Prefer /share/ first: yt-dlp's Fathom extractor + cookies; then /calls/ via Playwright.
+                        candidates = []
+                        su, cu = meeting.get('share_url'), meeting.get('url')
+                        if su:
+                            candidates.append(su)
+                        if cu and cu not in candidates:
+                            candidates.append(cu)
+                        
+                        if not candidates:
+                            q.put({
+                                'type': 'warning',
+                                'message': f'[{i+1}/{total}] Video skipped: API returned no share or call URL.',
+                            })
+                        elif not google_session_ready() and not any(
+                            '/share/' in (x or '').lower() for x in candidates
+                        ):
+                            q.put({
+                                'type': 'warning',
+                                'message': (
+                                    f'[{i+1}/{total}] Video skipped: only /calls/ links are available; '
+                                    'use "Sign in with Google" for browser download. '
+                                    '(Share links can work without Google via yt-dlp.)'
+                                ),
+                            })
+                        else:
+                            if video_extractor is None:
+                                video_extractor = VideoExtractor()
+                            success, last_msg = False, ''
+                            for cand in candidates:
+                                if '/calls/' in (cand or '').lower() and not google_session_ready():
+                                    continue
+                                q.put({'type': 'status', 'message': f'[{i+1}/{total}] Trying video download…'})
+                                success, last_msg = video_extractor.download_video(
+                                    cand, folder_path, progress_callback=video_progress
+                                )
+                                if success:
+                                    break
+                            if not success:
+                                q.put({'type': 'warning', 'message': f'Video download failed: {last_msg}'})
+                            else:
+                                q.put({'type': 'status', 'message': last_msg})
+                            time.sleep(VIDEO_DOWNLOAD_DELAY)
                 
                 # Mark meeting complete
                 update_progress(5, f'[{i+1}/{total}] Complete!')

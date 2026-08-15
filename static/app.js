@@ -519,11 +519,7 @@ async function startDownload() {
         action_items: elements.optActionItems.checked
     };
     
-    // Check if video is selected but not authenticated with Google
-    if (options.video && !elements.googleAuthBtn.disabled) {
-        showStatus('warning', 'Please sign in with Google first to enable video downloads.');
-        return;
-    }
+    // Video: server tries API direct stream first; browser/Google only if needed.
     
     // Show progress overlay
     elements.progressOverlay.style.display = 'flex';

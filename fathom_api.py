@@ -8,6 +8,46 @@ import time
 from typing import Optional, Tuple, List, Dict, Any
 
 
+def extract_direct_video_url_from_payload(data: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Return a direct HTTP(S) media URL if the API exposes one (skips browser automation).
+    Ignores fathom.video / fathom.ai page URLs.
+    """
+    if not data or not isinstance(data, dict):
+        return None
+
+    def is_page_url(u: str) -> bool:
+        ul = u.lower()
+        return 'fathom.video' in ul or 'fathom.ai' in ul
+
+    def looks_like_media(u: str) -> bool:
+        if not u.startswith('http') or is_page_url(u):
+            return False
+        ul = u.lower()
+        if any(x in ul for x in ('.m3u8', '.mp4', '.mpd', '.webm')):
+            return True
+        if any(x in ul for x in ('cloudfront', 'amazonaws', 'mux.com', 'storage.googleapis', '/v1/video', 'playlist')):
+            return True
+        return False
+
+    for key in (
+        'video_download_url', 'mp4_url', 'download_url', 'playback_url',
+        'recording_playback_url', 'hls_url', 'stream_url', 'video_url',
+    ):
+        v = data.get(key)
+        if isinstance(v, str) and looks_like_media(v):
+            return v
+
+    for nested_key in ('recording', 'video', 'asset', 'media'):
+        nested = data.get(nested_key)
+        if isinstance(nested, dict):
+            found = extract_direct_video_url_from_payload(nested)
+            if found:
+                return found
+
+    return None
+
+
 class FathomAPI:
     """Client for the Fathom API"""
     
@@ -116,6 +156,7 @@ class FathomAPI:
                 'date': m.get('created_at'),
                 'url': m.get('url'),
                 'share_url': m.get('share_url'),
+                'recording_playback_url': m.get('recording_playback_url'),
                 'recording_start_time': m.get('recording_start_time'),
                 'recording_end_time': m.get('recording_end_time'),
                 'recorded_by': m.get('recorded_by', {}).get('name'),
@@ -166,6 +207,10 @@ class FathomAPI:
         
         return meeting, None
     
+    def get_recording(self, recording_id: int) -> Tuple[Optional[Dict], Optional[str]]:
+        """Fetch recording metadata (may include playback/download URLs depending on API version)."""
+        return self._request('GET', f'/recordings/{recording_id}')
+
     def get_transcript(self, recording_id: int) -> Tuple[Optional[Dict], Optional[str]]:
         """Fetch transcript for a specific recording"""
         return self._request('GET', f'/recordings/{recording_id}/transcript')

@@ -6,11 +6,51 @@ Supports Google OAuth by using a persistent browser session
 
 import os
 import re
+import sys
 import json
+import tempfile
 import subprocess
 import requests
 from typing import Optional, Tuple, List
-from playwright.sync_api import sync_playwright, Browser, Page
+from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
+
+
+def _storage_state_to_netscape_cookies(storage_path: str, out_path: str) -> bool:
+    """Convert Playwright storage_state JSON to Netscape cookies.txt for yt-dlp."""
+    try:
+        with open(storage_path, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+        cookies = state.get('cookies') or []
+        if not cookies:
+            return False
+        lines = [
+            '# Netscape HTTP Cookie File',
+            '# https://curl.haxx.se/rfc/cookie_spec.html',
+            '',
+        ]
+        for c in cookies:
+            domain = (c.get('domain') or '').strip()
+            if not domain:
+                continue
+            if not domain.startswith('.'):
+                domain = '.' + domain
+            path = c.get('path') or '/'
+            secure = 'TRUE' if c.get('secure') else 'FALSE'
+            exp = c.get('expires')
+            if exp is None or exp <= 0:
+                exp = 2145916555
+            else:
+                exp = int(exp)
+            name = c.get('name', '')
+            value = c.get('value', '')
+            if not name:
+                continue
+            lines.append(f'{domain}\tTRUE\t{path}\t{secure}\t{exp}\t{name}\t{value}')
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(lines) + '\n')
+        return True
+    except Exception:
+        return False
 
 
 class VideoExtractor:
@@ -19,44 +59,145 @@ class VideoExtractor:
     # Path to store browser session for Google OAuth
     SESSION_DIR = os.path.join(os.path.dirname(__file__), '.browser_session')
     
+    # Fathom is a SPA; "networkidle" often never fires (analytics, websockets). Use "load".
+    _NAV_WAIT = 'load'
+    _NAV_TIMEOUT_MS = 90_000
+    
     def __init__(self, email: str = None, password: str = None):
         self.email = email
         self.password = password
         self.playwright = None
         self.browser: Optional[Browser] = None
-        self.context = None
+        self.context: Optional[BrowserContext] = None
         self.authenticated = False
         self._headless = True  # Will be set to False for first-time Google auth
-    
-    def _ensure_browser(self, headless: bool = True):
-        """Initialize browser if not already running"""
-        if not self.browser:
-            self.playwright = sync_playwright().start()
-            
-            # Create session directory if it doesn't exist
-            os.makedirs(self.SESSION_DIR, exist_ok=True)
-            
-            self.browser = self.playwright.chromium.launch(
-                headless=headless,
-                args=['--disable-blink-features=AutomationControlled']
-            )
-            
-            # Try to load existing session
-            storage_state = os.path.join(self.SESSION_DIR, 'state.json')
-            if os.path.exists(storage_state):
-                try:
-                    self.context = self.browser.new_context(
-                        storage_state=storage_state,
-                        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
+    def _profile_dir(self) -> str:
+        """Persistent Chromium profile (OAuth + cookies survive across runs)."""
+        return os.path.join(self.SESSION_DIR, 'chromium-profile')
+
+    def _should_seed_storage_state(self) -> bool:
+        """Load state.json into a fresh profile once (migration from old flow)."""
+        storage_state = os.path.join(self.SESSION_DIR, 'state.json')
+        if not os.path.exists(storage_state):
+            return False
+        profile_dir = self._profile_dir()
+        if not os.path.isdir(profile_dir):
+            return True
+        try:
+            return len(os.listdir(profile_dir)) == 0
+        except OSError:
+            return True
+
+    def _apply_storage_state_cookies(self) -> None:
+        """One-time migration: load cookies from state.json into persistent context."""
+        path = os.path.join(self.SESSION_DIR, 'state.json')
+        if not self.context or not os.path.exists(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            cookies = state.get('cookies') or []
+            if cookies:
+                self.context.add_cookies(cookies)
+        except Exception:
+            pass
+
+    def _apply_storage_state_origins(self) -> None:
+        """Restore localStorage for fathom.* origins from state.json (migration helper)."""
+        if not self.context:
+            return
+        path = os.path.join(self.SESSION_DIR, 'state.json')
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+        except Exception:
+            return
+        for origin in state.get('origins') or []:
+            origin_url = origin.get('origin') or ''
+            if 'fathom' not in origin_url.lower():
+                continue
+            ls_items = origin.get('localStorage') or []
+            if not origin_url or not ls_items:
+                continue
+            page = self.context.new_page()
+            try:
+                page.goto(origin_url, wait_until=self._NAV_WAIT, timeout=self._NAV_TIMEOUT_MS)
+                for item in ls_items:
+                    name = item.get('name')
+                    if name is None:
+                        continue
+                    value = item.get('value') or ''
+                    page.evaluate(
+                        """([n, v]) => { try { localStorage.setItem(n, v); } catch (e) {} }""",
+                        [name, value],
                     )
-                except:
-                    self.context = self.browser.new_context(
-                        user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    )
-            else:
-                self.context = self.browser.new_context(
-                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            except Exception:
+                pass
+            finally:
+                page.close()
+
+    def _launch_persistent_context(self, launch_kwargs: dict):
+        """
+        Prefer installed Google Chrome (includes Google API keys; fewer OAuth quirks than bundled Chromium).
+        On macOS, drop Playwright's --no-sandbox default (unnecessary and triggers a scary banner).
+        """
+        ignore = ['--enable-automation']
+        if sys.platform == 'darwin':
+            ignore.append('--no-sandbox')
+        launch_kwargs = {**launch_kwargs, 'ignore_default_args': ignore}
+
+        channel = (os.environ.get('PLAYWRIGHT_BROWSER_CHANNEL') or os.environ.get('FATHOM_BROWSER_CHANNEL') or '').strip()
+        use_system_chrome = os.environ.get('FATHOM_USE_SYSTEM_CHROME', '1').lower() not in ('0', 'false', 'no')
+
+        if channel:
+            return self.playwright.chromium.launch_persistent_context(**{**launch_kwargs, 'channel': channel})
+
+        if use_system_chrome:
+            try:
+                return self.playwright.chromium.launch_persistent_context(
+                    **{**launch_kwargs, 'channel': 'chrome'}
                 )
+            except Exception:
+                pass
+
+        return self.playwright.chromium.launch_persistent_context(**launch_kwargs)
+
+    def _ensure_browser(self, headless: bool = True):
+        """Launch persistent browser context (required for reliable Google OAuth reuse)."""
+        if self.context:
+            return
+        if os.environ.get('FATHOM_VIDEO_HEADLESS', '').lower() in ('0', 'false', 'no'):
+            headless = False
+        self.playwright = sync_playwright().start()
+        os.makedirs(self.SESSION_DIR, exist_ok=True)
+        profile_dir = self._profile_dir()
+        os.makedirs(profile_dir, exist_ok=True)
+
+        uag = (
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+        )
+        launch_kwargs = {
+            'user_data_dir': profile_dir,
+            'headless': headless,
+            'viewport': {'width': 1280, 'height': 720},
+            'locale': 'en-US',
+            'user_agent': uag,
+            'args': [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+            ],
+        }
+        seed_from_json = self._should_seed_storage_state()
+
+        self.context = self._launch_persistent_context(launch_kwargs)
+        self.browser = None
+
+        # launch_persistent_context() does not accept storage_state; seed once for migration.
+        if seed_from_json:
+            self._apply_storage_state_cookies()
+            self._apply_storage_state_origins()
     
     def _save_session(self):
         """Save browser session for future use"""
@@ -79,7 +220,11 @@ class VideoExtractor:
         
         try:
             # Navigate to Fathom login page
-            page.goto('https://fathom.video/users/sign_in', wait_until='networkidle')
+            page.goto(
+                'https://fathom.video/users/sign_in',
+                wait_until=self._NAV_WAIT,
+                timeout=self._NAV_TIMEOUT_MS,
+            )
             
             # Check if already logged in (redirected to dashboard or home)
             if 'sign_in' not in page.url.lower() and 'sign_up' not in page.url.lower():
@@ -114,32 +259,31 @@ class VideoExtractor:
             self._save_session()
             self.authenticated = True
             
+            verify = self.context.new_page()
+            try:
+                verify.goto(
+                    'https://fathom.video/home',
+                    wait_until=self._NAV_WAIT,
+                    timeout=self._NAV_TIMEOUT_MS,
+                )
+                verify.wait_for_timeout(2000)
+                vurl = verify.url.lower()
+                if 'sign_in' in vurl or 'sign_up' in vurl:
+                    page.close()
+                    return (
+                        False,
+                        'Fathom still shows the sign-in page after login. Try again, use a normal network/VPN, '
+                        'or ensure Chrome (not only Chromium) is used for sign-in.',
+                    )
+            finally:
+                verify.close()
+            
             page.close()
             return True, "Login successful! Session saved for future downloads."
             
         except Exception as e:
             page.close()
             return False, f"Authentication error: {str(e)}"
-    
-    def _authenticate(self, page: Page) -> Tuple[bool, Optional[str]]:
-        """Check if authenticated, prompt for Google login if needed"""
-        if self.authenticated:
-            return True, None
-        
-        try:
-            # Navigate to Fathom to check auth status
-            page.goto('https://fathom.video/home', wait_until='networkidle')
-            
-            # Check if we're logged in (not redirected to sign_in)
-            if 'sign_in' not in page.url.lower() and 'sign_up' not in page.url.lower():
-                self.authenticated = True
-                return True, None
-            
-            # Not logged in - need Google OAuth
-            return False, "Google authentication required. Please use 'Authenticate with Google' button first."
-            
-        except Exception as e:
-            return False, f"Authentication check error: {str(e)}"
     
     def extract_video_url(self, fathom_url: str) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -162,24 +306,37 @@ class VideoExtractor:
                     return
                 
                 # Look for video files, HLS manifests, or cloud storage URLs
-                video_indicators = ['.mp4', '.webm', '.m3u8', '/video/', 'cloudfront', 'amazonaws', 'storage.googleapis']
+                video_indicators = [
+                    '.mp4', '.webm', '.m3u8', '.mpd', '/video/', 'cloudfront', 'amazonaws',
+                    'storage.googleapis', 'mux.com', 'akamaized', 'fastly',
+                ]
                 if any(ind in url.lower() for ind in video_indicators):
                     video_urls.append(url)
                 elif 'video' in content_type.lower():
                     video_urls.append(url)
             
             page.on('response', handle_response)
-            
-            # Authenticate first
-            success, error = self._authenticate(page)
-            if not success:
-                return None, error
-            
-            # Navigate to the video page
-            page.goto(fathom_url, wait_until='networkidle', timeout=30000)
-            
-            # Wait for page to fully load
+
+            # Single navigation: OAuth sessions often fail on /home but work on meeting URLs.
+            page.goto(
+                fathom_url,
+                wait_until=self._NAV_WAIT,
+                timeout=self._NAV_TIMEOUT_MS,
+            )
             page.wait_for_timeout(2000)
+
+            url_lower = page.url.lower()
+            if 'sign_in' in url_lower or 'sign_up' in url_lower:
+                return None, (
+                    'Google authentication required. Use "Sign in with Google" in the app, '
+                    "or set FATHOM_VIDEO_HEADLESS=0 if headless Chrome cannot use your session."
+                )
+            if 'accounts.google.com' in url_lower:
+                return None, (
+                    'Google sign-in page opened in the automated browser. '
+                    'Use "Sign in with Google" in the app to refresh the session.'
+                )
+            self.authenticated = True
             
             # Try to trigger video playback to capture the actual URL
             try:
@@ -241,7 +398,7 @@ class VideoExtractor:
                     unique_urls.append(u)
             
             # Prefer m3u8 (HLS) for streaming, then MP4
-            m3u8_urls = [u for u in unique_urls if '.m3u8' in u.lower() and 'index.m3u8' in u.lower()]
+            m3u8_urls = [u for u in unique_urls if '.m3u8' in u.lower()]
             mp4_urls = [u for u in unique_urls if '.mp4' in u.lower()]
             
             if m3u8_urls:
@@ -263,6 +420,73 @@ class VideoExtractor:
         finally:
             page.close()
     
+    def _download_via_ytdlp(self, share_url: str, output_path: str) -> Tuple[bool, str]:
+        """
+        Fathom's public share links work with yt-dlp's built-in extractor (not /calls/ URLs).
+        Uses cookies from state.json when present.
+        """
+        cookie_file = None
+        try:
+            out_dir = os.path.dirname(output_path)
+            base = os.path.splitext(os.path.basename(output_path))[0]
+            out_tmpl = os.path.join(out_dir, f'{base}.%(ext)s')
+            
+            state_path = os.path.join(self.SESSION_DIR, 'state.json')
+            if os.path.exists(state_path):
+                fd, cookie_file = tempfile.mkstemp(suffix='_cookies.txt', text=True)
+                os.close(fd)
+                if not _storage_state_to_netscape_cookies(state_path, cookie_file):
+                    try:
+                        os.unlink(cookie_file)
+                    except OSError:
+                        pass
+                    cookie_file = None
+            
+            cmd = [
+                sys.executable,
+                '-m',
+                'yt_dlp',
+                '--no-warnings',
+                '--no-playlist',
+                '-f',
+                'bv*+ba/b',
+                '--merge-output-format',
+                'mp4',
+                '-o',
+                out_tmpl,
+            ]
+            if cookie_file:
+                cmd.extend(['--cookies', cookie_file])
+            cmd.append(share_url)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+            if result.returncode != 0:
+                tail = (result.stderr or result.stdout or '')[-2500:]
+                return False, tail.strip() or 'yt-dlp failed'
+            
+            if not os.path.exists(output_path):
+                for name in os.listdir(out_dir):
+                    if name.startswith(base) and name.endswith('.mp4'):
+                        found = os.path.join(out_dir, name)
+                        if found != output_path:
+                            os.replace(found, output_path)
+                        break
+            
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                mb = os.path.getsize(output_path) // 1_000_000
+                return True, f'Video saved ({mb}MB) via yt-dlp'
+            return False, 'yt-dlp finished but no MP4 was written'
+        except subprocess.TimeoutExpired:
+            return False, 'yt-dlp timed out (very long recording?)'
+        except Exception as e:
+            return False, f'yt-dlp error: {e}'
+        finally:
+            if cookie_file and os.path.exists(cookie_file):
+                try:
+                    os.unlink(cookie_file)
+                except OSError:
+                    pass
+    
     def download_video(
         self, 
         fathom_url: str, 
@@ -276,6 +500,12 @@ class VideoExtractor:
         Skips download if existing file is complete (same duration as source).
         """
         output_path = os.path.join(output_folder, filename)
+        
+        # yt-dlp only supports /share/... — avoids brittle Playwright HLS sniffing when it works.
+        if '/share/' in fathom_url.lower():
+            ok, msg = self._download_via_ytdlp(fathom_url, output_path)
+            if ok:
+                return True, msg
         
         video_url, error = self.extract_video_url(fathom_url)
         
@@ -300,6 +530,45 @@ class VideoExtractor:
         else:
             return self._download_direct(video_url, output_path, progress_callback)
     
+    def download_video_stream_url(
+        self,
+        stream_url: str,
+        output_folder: str,
+        filename: str = "video.mp4",
+        api_key: Optional[str] = None,
+        progress_callback: callable = None,
+    ) -> Tuple[bool, str]:
+        """
+        Download a direct stream URL (e.g. from Fathom API). Does not use Playwright.
+        Pass api_key when the CDN requires X-Api-Key.
+        """
+        output_path = os.path.join(output_folder, filename)
+        extra = {}
+        if api_key:
+            extra['X-Api-Key'] = api_key
+        if '.m3u8' in stream_url.lower():
+            return self._download_hls(stream_url, output_path, progress_callback, extra_headers=extra)
+        return self._download_direct_http(stream_url, output_path, progress_callback, extra_headers=extra)
+
+    def _ffmpeg_headers_for_stream(self, extra_headers: Optional[dict] = None) -> str:
+        """Header block for ffmpeg -cookies (all browser cookies + optional API headers)."""
+        parts = []
+        if self.context:
+            cookies = self.context.cookies()
+            cookie_parts = [f"{c['name']}={c['value']}" for c in cookies if c.get('value')]
+            cookie_str = "; ".join(cookie_parts)
+            if cookie_str:
+                parts.append(f"Cookie: {cookie_str}\r\n")
+        parts.append("Referer: https://fathom.video/\r\n")
+        parts.append(
+            "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36\r\n"
+        )
+        if extra_headers:
+            for k, v in extra_headers.items():
+                if v is not None:
+                    parts.append(f"{k}: {v}\r\n")
+        return "".join(parts)
+
     def _get_duration(self, path_or_url: str, is_url: bool = False) -> Optional[float]:
         """Get video duration in seconds using ffprobe"""
         try:
@@ -311,11 +580,10 @@ class VideoExtractor:
                    '-of', 'default=noprint_wrappers=1:nokey=1']
             
             if is_url:
-                # Add headers for URL access
                 cookie_str = ""
                 if self.context:
                     cookies = self.context.cookies()
-                    cookie_parts = [f"{c['name']}={c['value']}" for c in cookies if 'fathom' in c.get('domain', '')]
+                    cookie_parts = [f"{c['name']}={c['value']}" for c in cookies if c.get('value')]
                     cookie_str = "; ".join(cookie_parts)
                 cmd.extend(['-headers', f'Cookie: {cookie_str}\r\n'])
             
@@ -428,7 +696,13 @@ class VideoExtractor:
         
         return None
     
-    def _download_hls(self, m3u8_url: str, output_path: str, progress_callback: callable = None) -> Tuple[bool, str]:
+    def _download_hls(
+        self,
+        m3u8_url: str,
+        output_path: str,
+        progress_callback: callable = None,
+        extra_headers: Optional[dict] = None,
+    ) -> Tuple[bool, str]:
         """Download HLS stream using ffmpeg with progress monitoring."""
         import threading
         
@@ -441,18 +715,13 @@ class VideoExtractor:
             # Download to temp file first (safety against partial downloads)
             temp_path = output_path + '.tmp'
             
-            # Build cookie string for ffmpeg
-            cookie_str = ""
-            if self.context:
-                cookies = self.context.cookies()
-                cookie_parts = [f"{c['name']}={c['value']}" for c in cookies if 'fathom' in c.get('domain', '')]
-                cookie_str = "; ".join(cookie_parts)
+            header_block = self._ffmpeg_headers_for_stream(extra_headers)
             
             # Build ffmpeg command (download to temp file)
             cmd = [
                 ffmpeg,
                 '-y',  # Overwrite output
-                '-headers', f'Cookie: {cookie_str}\r\nReferer: https://fathom.video/\r\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36\r\n',
+                '-headers', header_block,
                 '-i', m3u8_url,
                 '-c', 'copy',  # Copy streams without re-encoding
                 '-bsf:a', 'aac_adtstoasc',  # Fix audio for MP4 container
@@ -500,7 +769,7 @@ class VideoExtractor:
                 cmd_simple = [
                     ffmpeg,
                     '-y',
-                    '-headers', f'Cookie: {cookie_str}\r\nReferer: https://fathom.video/\r\n',
+                    '-headers', header_block,
                     '-i', m3u8_url,
                     '-c', 'copy',
                     '-f', 'mp4',
@@ -532,23 +801,35 @@ class VideoExtractor:
             return False, f"HLS download error: {str(e)}"
     
     def _download_direct(self, video_url: str, output_path: str, progress_callback: callable = None) -> Tuple[bool, str]:
+        return self._download_direct_http(video_url, output_path, progress_callback, extra_headers=None)
+
+    def _download_direct_http(
+        self,
+        video_url: str,
+        output_path: str,
+        progress_callback: callable = None,
+        extra_headers: Optional[dict] = None,
+    ) -> Tuple[bool, str]:
         """Download video directly via HTTP with progress monitoring."""
         temp_path = output_path + '.tmp'
         try:
-            # Use cookies from browser session for authenticated download
             cookies = {}
             if self.context:
                 for cookie in self.context.cookies():
                     cookies[cookie['name']] = cookie['value']
             
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://fathom.video/',
+            }
+            if extra_headers:
+                headers.update(extra_headers)
+            
             response = requests.get(
                 video_url,
                 cookies=cookies,
                 stream=True,
-                headers={
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Referer': 'https://fathom.video/'
-                }
+                headers=headers,
             )
             
             if response.status_code != 200:
